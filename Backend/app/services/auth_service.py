@@ -1,5 +1,6 @@
 import logging
 import httpx
+from pymongo.errors import DuplicateKeyError
 from typing import Dict, Any, Tuple
 from urllib.parse import urlencode
 
@@ -38,7 +39,7 @@ class AuthService:
             "grant_type": "authorization_code"
         }
         
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=10.0) as client:
             token_resp = await client.post(token_url, data=data)
             if token_resp.status_code != 200:
                 logger.error(f"Google token exchange failed: {token_resp.text}")
@@ -108,7 +109,13 @@ class AuthService:
                 "created_at": now,
                 "updated_at": now
             }
-            await db.users.insert_one(user)
+            try:
+                await db.users.insert_one(user)
+            except DuplicateKeyError:
+                # Two first-time logins raced; use the document that won.
+                user = await db.users.find_one({"$or": [{"google_id": google_id}, {"email": email}]})
+                if not user:
+                    raise
 
         # Generate JWT
         token_data = {
@@ -153,11 +160,13 @@ class AuthService:
         MERGE (u:User {user_id: $user_id})
         SET u.name = $name, u.email = $email
         """
+        # Best effort: graph nodes are also created lazily (MERGE) on first
+        # interaction, so an outage here must not block onboarding.
         await execute_query(cypher_query, {
             "user_id": user_id,
             "name": name,
             "email": user["email"]
-        })
+        }, required=False)
 
         # Issue updated full JWT
         token_data = {

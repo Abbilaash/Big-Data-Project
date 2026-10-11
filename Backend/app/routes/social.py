@@ -46,12 +46,12 @@ async def get_follow_status(
 
 @router.get("/followers", response_model=ApiResponse[List[SocialUserResponse]], summary="Get My Followers")
 async def get_my_followers(current_user: dict = Depends(get_current_active_user)):
-    followers = await SocialService.get_followers(current_user["user_id"])
+    followers = await SocialService.get_followers(current_user["user_id"], viewer_id=current_user["user_id"])
     return ApiResponse(message="My followers retrieved", data=followers)
 
 @router.get("/following", response_model=ApiResponse[List[SocialUserResponse]], summary="Get My Following List")
 async def get_my_following(current_user: dict = Depends(get_current_active_user)):
-    following = await SocialService.get_following(current_user["user_id"])
+    following = await SocialService.get_following(current_user["user_id"], viewer_id=current_user["user_id"])
     return ApiResponse(message="My following list retrieved", data=following)
 
 @router.get("/mutuals/{user_id}", response_model=ApiResponse[List[SocialUserResponse]], summary="Get Mutual Connections")

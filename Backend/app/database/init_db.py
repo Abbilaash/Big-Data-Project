@@ -24,10 +24,11 @@ async def initialize_databases():
         await db.events.create_index([("category", ASCENDING)])
         await db.events.create_index([("date", ASCENDING)])
         await db.events.create_index([("host_id", ASCENDING)])
+        await db.events.create_index([("status", ASCENDING), ("date", ASCENDING)])
         
         # Comments indexes
         await db.comments.create_index([("comment_id", ASCENDING)], unique=True)
-        await db.comments.create_index([("event_id", ASCENDING)])
+        await db.comments.create_index([("event_id", ASCENDING), ("created_at", ASCENDING)])
         
         logger.info("MongoDB indexes created successfully.")
     except Exception as e:
@@ -44,8 +45,8 @@ async def initialize_databases():
             "FOR (e:Event) REQUIRE e.event_id IS UNIQUE"
         )
         
-        await execute_query(user_constraint_query)
-        await execute_query(event_constraint_query)
+        await execute_query(user_constraint_query, required=False)
+        await execute_query(event_constraint_query, required=False)
         logger.info("Neo4j constraints created successfully.")
     except Exception as e:
         logger.warning(f"Error creating Neo4j constraints: {e}")

@@ -1,75 +1,84 @@
 import logging
 from typing import Dict, Any, List, Optional
+from pymongo import ReturnDocument
 from app.database.mongodb import get_database
 from app.database.neo4j import execute_query
+from app.services.event_service import EventService
+from app.utils.errors import NotFoundError, ConflictError
 from app.utils.helpers import utc_now
 
 logger = logging.getLogger("campusconnect.admin_service")
 
 class AdminService:
     @staticmethod
-    async def get_pending_events() -> List[Dict[str, Any]]:
+    async def get_events_by_status(status: str, limit: int = 100) -> List[Dict[str, Any]]:
         db = get_database()
-        cursor = db.events.find({"status": "pending"}).sort("created_at", -1)
-        return await cursor.to_list(length=100)
+        events = await db.events.find({"status": status}).sort("created_at", -1).to_list(length=limit)
+        await EventService._attach_host_names(events)
+        return events
+
+    @staticmethod
+    async def get_pending_events() -> List[Dict[str, Any]]:
+        return await AdminService.get_events_by_status("pending")
+
+    @staticmethod
+    async def _transition(event_id: str, new_status: str, fields: Dict[str, Any]) -> Dict[str, Any]:
+        """Atomically move a PENDING event to a new status.
+
+        The filter on status=pending makes concurrent or repeated moderation
+        requests safe: only one can win, the rest get a 409.
+        """
+        db = get_database()
+        now = utc_now()
+        updated = await db.events.find_one_and_update(
+            {"event_id": event_id, "status": "pending"},
+            {"$set": {"status": new_status, "updated_at": now, **fields}},
+            return_document=ReturnDocument.AFTER,
+        )
+        if updated is None:
+            existing = await db.events.find_one({"event_id": event_id}, {"status": 1})
+            if existing is None:
+                raise NotFoundError("Event not found")
+            raise ConflictError(f"Event is already {existing.get('status')} and cannot be moderated again")
+        return updated
 
     @staticmethod
     async def approve_event(event_id: str, admin_id: str) -> Dict[str, Any]:
         db = get_database()
         event = await db.events.find_one({"event_id": event_id})
         if not event:
-            raise ValueError("Event not found")
+            raise NotFoundError("Event not found")
+        if event.get("status") != "pending":
+            raise ConflictError(f"Event is already {event.get('status')} and cannot be moderated again")
 
-        now = utc_now()
-        await db.events.update_one(
-            {"event_id": event_id},
-            {
-                "$set": {
-                    "status": "approved",
-                    "approved_at": now,
-                    "approved_by": admin_id,
-                    "updated_at": now
-                }
-            }
+        # Graph first: MERGE is idempotent, and if the graph is down nothing has
+        # changed yet, so the admin can simply retry (HTTP 503).
+        await execute_query(
+            """
+            MERGE (u:User {user_id: $host_id})
+            MERGE (e:Event {event_id: $event_id})
+            MERGE (u)-[r:HOSTED]->(e)
+            RETURN r
+            """,
+            {"host_id": event["host_id"], "event_id": event_id},
         )
-        event["status"] = "approved"
-
-        # Create Neo4j (:User {user_id: host_id})-[:HOSTED]->(:Event {event_id: event_id})
-        host_id = event["host_id"]
-        cypher = """
-        MERGE (u:User {user_id: $host_id})
-        MERGE (e:Event {event_id: $event_id})
-        MERGE (u)-[r:HOSTED]->(e)
-        RETURN r
-        """
-        await execute_query(cypher, {"host_id": host_id, "event_id": event_id})
-        logger.info(f"Event {event_id} approved by admin {admin_id}. HOSTED relationship created in Neo4j.")
-        return event
+        approved = await AdminService._transition(
+            event_id, "approved", {"approved_at": utc_now(), "approved_by": admin_id}
+        )
+        await EventService._attach_host_names([approved])
+        logger.info(f"Event {event_id} approved by admin {admin_id}.")
+        return approved
 
     @staticmethod
     async def reject_event(event_id: str, admin_id: str, reason: Optional[str] = None) -> Dict[str, Any]:
-        db = get_database()
-        event = await db.events.find_one({"event_id": event_id})
-        if not event:
-            raise ValueError("Event not found")
-
-        now = utc_now()
-        await db.events.update_one(
-            {"event_id": event_id},
-            {
-                "$set": {
-                    "status": "rejected",
-                    "rejected_at": now,
-                    "rejected_by": admin_id,
-                    "rejection_reason": reason,
-                    "updated_at": now
-                }
-            }
+        rejected = await AdminService._transition(
+            event_id,
+            "rejected",
+            {"rejected_at": utc_now(), "rejected_by": admin_id, "rejection_reason": reason},
         )
-        event["status"] = "rejected"
-        event["rejection_reason"] = reason
+        await EventService._attach_host_names([rejected])
         logger.info(f"Event {event_id} rejected by admin {admin_id}.")
-        return event
+        return rejected
 
     @staticmethod
     async def get_event_analytics() -> Dict[str, Any]:
@@ -171,9 +180,22 @@ class AdminService:
             for r in mi_res
         ]
 
+        # Names from MongoDB (source of truth); graph copies can be stale.
+        mf_ids = [r["user_id"] for r in mf_res]
+        mf_docs = await db.users.find({"user_id": {"$in": mf_ids}}).to_list(length=len(mf_ids)) if mf_ids else []
+        mf_names = {u["user_id"]: u.get("name") for u in mf_docs}
+        most_followed_users = [
+            {
+                "user_id": r["user_id"],
+                "name": mf_names.get(r["user_id"]) or r.get("name") or "Unknown",
+                "follower_count": r["follower_count"],
+            }
+            for r in mf_res
+        ]
+
         return {
             "total_users": total_users,
             "total_follows": total_follows,
-            "most_followed_users": mf_res,
+            "most_followed_users": most_followed_users,
             "most_interacted_events": most_interacted_events
         }

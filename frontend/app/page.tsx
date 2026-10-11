@@ -1,102 +1,154 @@
+"use client"
+
 import Link from "next/link"
-import { CalendarCheck, CheckCircle2, Lightbulb, Users } from "lucide-react"
+import { CalendarCheck, ClipboardList, Plus, UserPlus, Users } from "lucide-react"
 
-import {
-  currentUser,
-  events,
-  stats,
-  students,
-} from "@/lib/data"
-import { StatCard } from "@/components/stat-card"
-import { EventCard } from "@/components/event-card"
-import { StudentCard } from "@/components/student-card"
+import { api } from "@/lib/api"
+import { useCurrentUser } from "@/lib/auth"
+import { useAsync } from "@/lib/use-async"
+import { formatDate } from "@/lib/format"
 import { Button } from "@/components/ui/button"
+import { EventCard } from "@/components/event-card"
+import { PersonCard } from "@/components/person-card"
+import { StatCard } from "@/components/stat-card"
+import { CardGridSkeleton, EmptyState, ErrorState, ListSkeleton } from "@/components/state-views"
+import { LinkButton } from "@/components/link-button"
 
-const statIcons = [CalendarCheck, CheckCircle2, Lightbulb, Users]
-
-function SectionHeader({
-  title,
-  href,
-}: {
-  title: string
-  href?: string
-}) {
+function SectionHeading({ title, href, hrefLabel }: { title: string; href?: string; hrefLabel?: string }) {
   return (
-    <div className="mb-4 flex items-center justify-between">
-      <h2 className="text-xl font-semibold">{title}</h2>
+    <div className="mb-4 flex items-end justify-between gap-4">
+      <h2 className="text-xl font-semibold tracking-tight">{title}</h2>
       {href ? (
-        <Button
-          variant="ghost"
-          size="sm"
-          nativeButton={false}
-          render={<Link href={href} />}
-        >
-          View all
-        </Button>
+        <Link href={href} className="text-sm font-medium text-primary hover:underline">
+          {hrefLabel ?? "View all"}
+        </Link>
       ) : null}
     </div>
   )
 }
 
 export default function DashboardPage() {
-  const upcomingEvents = events.slice(0, 3)
-  const recommendedEvents = events.slice(3, 6)
-  const recommendedTeammates = students.slice(0, 3)
+  const me = useCurrentUser()
+  const feed = useAsync(() => api.feed(9), [])
+  const registered = useAsync(() => api.myRegistered(), [])
+  const hosted = useAsync(() => api.myHosted(), [])
+  const profile = useAsync(() => api.user(me.user_id), [me.user_id])
+  const suggestions = useAsync(() => api.suggestions(4), [])
+
+  const upcomingRegistered = (registered.data ?? []).slice(0, 3)
+  const firstName = me.name.split(" ")[0]
+  const hasSocialItems = (feed.data ?? []).some((e) => e.social_context)
 
   return (
     <div className="space-y-10">
-      {/* Welcome */}
-      <section className="rounded-xl border bg-card p-6">
-        <h1 className="text-2xl font-bold sm:text-3xl">
-          Welcome back, {currentUser.name.split(" ")[0]}!
-        </h1>
-        <p className="mt-1 max-w-2xl text-muted-foreground">
-          Here&apos;s what&apos;s happening around campus. Explore upcoming events,
-          discover new opportunities, and connect with fellow students.
-        </p>
+      <section className="flex flex-col gap-4 rounded-2xl border bg-gradient-to-br from-primary/10 via-card to-card p-6 sm:flex-row sm:items-center sm:justify-between sm:p-8">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">Welcome back, {firstName}</h1>
+          <p className="mt-1 text-muted-foreground">
+            Here&apos;s what&apos;s happening on campus and what your connections are up to.
+          </p>
+        </div>
+        <LinkButton size="lg" className="h-10 w-fit px-4 text-sm" href="/events/new">
+          <Plus className="h-4 w-4" aria-hidden /> Host an event
+        </LinkButton>
       </section>
 
-      {/* Stats */}
-      <section className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        {stats.map((stat, i) => (
-          <StatCard
-            key={stat.label}
-            label={stat.label}
-            value={stat.value}
-            icon={statIcons[i]}
+      <section aria-label="Your activity" className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <StatCard label="Events registered" value={registered.data?.length ?? "–"} icon={CalendarCheck} />
+        <StatCard label="Events submitted" value={hosted.data?.length ?? "–"} icon={ClipboardList} />
+        <StatCard label="Following" value={profile.data?.following_count ?? "–"} icon={UserPlus} />
+        <StatCard label="Followers" value={profile.data?.followers_count ?? "–"} icon={Users} />
+      </section>
+
+      <section>
+        <SectionHeading title="Your feed" href="/events" hrefLabel="Browse all events" />
+        {feed.loading ? (
+          <CardGridSkeleton count={3} />
+        ) : feed.error ? (
+          <ErrorState error={feed.error} onRetry={feed.reload} title="Couldn't load your feed" />
+        ) : (feed.data ?? []).length === 0 ? (
+          <EmptyState
+            title="No upcoming events yet"
+            description="When events are approved they'll show up here. Be the first to host one."
+            action={
+              <LinkButton href="/events/new">
+                Host an event
+              </LinkButton>
+            }
           />
-        ))}
+        ) : (
+          <>
+            {!hasSocialItems ? (
+              <p className="mb-3 text-sm text-muted-foreground">
+                Follow people to see what they&apos;re registering for, liking and sharing — it&apos;ll shape this
+                feed.
+              </p>
+            ) : null}
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {(feed.data ?? []).map((event) => (
+                <EventCard key={event.event_id} event={event} reason={event.social_context?.reason} />
+              ))}
+            </div>
+          </>
+        )}
       </section>
 
-      {/* Upcoming events */}
-      <section>
-        <SectionHeader title="Upcoming Events" href="/events" />
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {upcomingEvents.map((event) => (
-            <EventCard key={event.id} event={event} />
-          ))}
-        </div>
-      </section>
+      <div className="grid gap-10 lg:grid-cols-2">
+        <section>
+          <SectionHeading title="Your registrations" href="/my-events" />
+          {registered.loading ? (
+            <ListSkeleton rows={2} />
+          ) : registered.error ? (
+            <ErrorState error={registered.error} onRetry={registered.reload} />
+          ) : upcomingRegistered.length === 0 ? (
+            <EmptyState
+              icon={CalendarCheck}
+              title="You haven't registered for anything"
+              description="Register for an event and it will appear here."
+            />
+          ) : (
+            <ul className="space-y-3">
+              {upcomingRegistered.map((e) => (
+                <li key={e.event_id}>
+                  <Link
+                    href={`/events/${e.event_id}`}
+                    className="flex items-center justify-between gap-3 rounded-xl border bg-card p-4 transition-colors hover:bg-accent/50"
+                  >
+                    <span className="min-w-0">
+                      <span className="block truncate font-medium">{e.title}</span>
+                      <span className="block truncate text-sm text-muted-foreground">
+                        {formatDate(e.date)} · {e.venue}
+                      </span>
+                    </span>
+                    <span className="text-xs text-primary">View</span>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
 
-      {/* Recommended events */}
-      <section>
-        <SectionHeader title="Recommended Events" href="/events" />
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {recommendedEvents.map((event) => (
-            <EventCard key={event.id} event={event} />
-          ))}
-        </div>
-      </section>
-
-      {/* Recommended teammates */}
-      <section>
-        <SectionHeader title="Recommended Teammates" href="/teammates" />
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {recommendedTeammates.map((student) => (
-            <StudentCard key={student.id} student={student} showConnect />
-          ))}
-        </div>
-      </section>
+        <section>
+          <SectionHeading title="People you may know" href="/people" />
+          {suggestions.loading ? (
+            <ListSkeleton rows={3} />
+          ) : suggestions.error ? (
+            <ErrorState error={suggestions.error} onRetry={suggestions.reload} />
+          ) : (suggestions.data ?? []).length === 0 ? (
+            <EmptyState
+              icon={Users}
+              title="No suggestions yet"
+              description="As more students join and follow each other, suggestions will appear."
+            />
+          ) : (
+            <div className="space-y-3">
+              {(suggestions.data ?? []).map((p) => (
+                <PersonCard key={p.user_id} person={p} />
+              ))}
+            </div>
+          )}
+        </section>
+      </div>
     </div>
   )
 }

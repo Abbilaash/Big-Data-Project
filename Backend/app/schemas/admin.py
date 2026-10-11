@@ -1,8 +1,8 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
 
 class EventRejectionRequest(BaseModel):
-    rejection_reason: Optional[str] = None
+    rejection_reason: Optional[str] = Field(None, max_length=500)
 
 class EventAnalyticsResponse(BaseModel):
     total_events: int

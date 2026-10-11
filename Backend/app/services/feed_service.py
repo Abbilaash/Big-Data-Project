@@ -1,9 +1,10 @@
 import logging
-from typing import Dict, Any, List
 from collections import defaultdict
+from typing import Any, Dict, List
 
 from app.database.mongodb import get_database
 from app.database.neo4j import execute_query
+from app.services.event_service import EventService
 from app.utils.helpers import utc_now
 
 logger = logging.getLogger("campusconnect.feed_service")
@@ -16,99 +17,106 @@ ACTION_WEIGHTS = {
     "VIEWED": 1
 }
 
+# Past-tense phrasing used in the human-readable reason.
+ACTION_PHRASES = {
+    "REGISTERED": "registered for this event",
+    "SHARED": "shared this event",
+    "LIKED": "liked this event",
+    "VIEWED": "viewed this event",
+}
+
+
+def build_reason(unique_users: List[Dict[str, Any]]) -> str:
+    """Compose the 'why am I seeing this' line from de-duplicated friend actions."""
+    top = unique_users[0]
+    if len(unique_users) == 1:
+        return f"{top['name']} {ACTION_PHRASES.get(top['action'], 'interacted with this event')}"
+    others = len(unique_users) - 1
+    noun = "connection" if others == 1 else "connections"
+    return f"{top['name']} and {others} other {noun} interacted with this event"
+
+
 class FeedService:
     @staticmethod
     async def get_personalized_feed(user_id: str, limit: int = 20) -> List[Dict[str, Any]]:
         """
-        1. Neo4j Query: Find events interacted with by followed users.
-        2. Rank events based on interaction weight & frequency.
-        3. MongoDB Query: Fetch complete event documents in batch ($in).
-        4. Combine event data with social context.
-        5. Fallback: Fill remaining slots with upcoming approved events.
+        1. Neo4j: events interacted with by people I follow.
+        2. Rank by summed action weight.
+        3. MongoDB: fetch approved, not-yet-past event documents in one $in query.
+        4. Attach social context (friend names come from MongoDB).
+        5. Fallback: pad with other upcoming approved events.
         """
-        cypher_query = """
-        MATCH (me:User {user_id: $user_id})-[:FOLLOWS]->(friend:User)-[r:LIKED|REGISTERED|SHARED|VIEWED]->(e:Event)
-        RETURN e.event_id AS event_id,
-               friend.user_id AS friend_id,
-               friend.name AS friend_name,
-               type(r) AS interaction_type
-        """
-        records = await execute_query(cypher_query, {"user_id": user_id})
+        records = await execute_query(
+            """
+            MATCH (:User {user_id: $user_id})-[:FOLLOWS]->(friend:User)-[r:LIKED|REGISTERED|SHARED|VIEWED]->(e:Event)
+            RETURN e.event_id AS event_id, friend.user_id AS friend_id, type(r) AS interaction_type
+            """,
+            {"user_id": user_id},
+            required=False,
+        )
 
-        # Group interactions by event_id
-        event_interactions = defaultdict(list)
-        event_scores = defaultdict(int)
+        db = get_database()
+        today = utc_now().strftime("%Y-%m-%d")
 
+        # Friend display names: MongoDB is the source of truth for profiles.
+        friend_ids = list({r["friend_id"] for r in records})
+        friends = (
+            await db.users.find({"user_id": {"$in": friend_ids}}).to_list(length=len(friend_ids))
+            if friend_ids else []
+        )
+        friend_names = {f["user_id"]: f.get("name") or "Someone" for f in friends}
+
+        event_interactions: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+        event_scores: Dict[str, int] = defaultdict(int)
         for rec in records:
-            eid = rec["event_id"]
-            action = rec["interaction_type"]
-            friend_id = rec["friend_id"]
-            friend_name = rec["friend_name"] or "Someone"
-
+            eid, action = rec["event_id"], rec["interaction_type"]
             event_interactions[eid].append({
-                "user_id": friend_id,
-                "name": friend_name,
-                "action": action
+                "user_id": rec["friend_id"],
+                "name": friend_names.get(rec["friend_id"], "Someone"),
+                "action": action,
             })
             event_scores[eid] += ACTION_WEIGHTS.get(action, 1)
 
-        # Sort event IDs by social score descending
-        sorted_event_ids = sorted(event_scores.keys(), key=lambda k: event_scores[k], reverse=True)
+        sorted_event_ids = sorted(event_scores, key=lambda k: event_scores[k], reverse=True)
 
-        social_feed_items = []
-        db = get_database()
-
+        feed: List[Dict[str, Any]] = []
         if sorted_event_ids:
-            # Batch fetch from MongoDB
-            cursor = db.events.find({
+            mongo_events = await db.events.find({
                 "event_id": {"$in": sorted_event_ids},
-                "status": "approved"
-            })
-            mongo_events = await cursor.to_list(length=len(sorted_event_ids))
+                "status": "approved",
+                "date": {"$gte": today},
+            }).to_list(length=len(sorted_event_ids))
             events_by_id = {e["event_id"]: e for e in mongo_events}
 
-            # Assemble feed items in sorted order
             for eid in sorted_event_ids:
-                if eid in events_by_id:
-                    event = events_by_id[eid]
-                    users_list = event_interactions[eid]
+                event = events_by_id.get(eid)
+                if not event:
+                    continue
+                # One entry per friend, keeping their strongest action.
+                best: Dict[str, Dict[str, Any]] = {}
+                for item in event_interactions[eid]:
+                    cur = best.get(item["user_id"])
+                    if cur is None or ACTION_WEIGHTS.get(item["action"], 0) > ACTION_WEIGHTS.get(cur["action"], 0):
+                        best[item["user_id"]] = item
+                unique_users = sorted(
+                    best.values(), key=lambda u: ACTION_WEIGHTS.get(u["action"], 0), reverse=True
+                )
+                event["social_context"] = {"reason": build_reason(unique_users), "users": unique_users}
+                feed.append(event)
 
-                    # Deduplicate user actions (keep highest priority action per user if needed)
-                    user_action_map = {}
-                    for u in users_list:
-                        uid = u["user_id"]
-                        if uid not in user_action_map or ACTION_WEIGHTS.get(u["action"], 0) > ACTION_WEIGHTS.get(user_action_map[uid]["action"], 0):
-                            user_action_map[uid] = u
-                    
-                    unique_users = list(user_action_map.values())
-                    top_user = unique_users[0]
-                    
-                    if len(unique_users) == 1:
-                        action_verb = top_user["action"].lower()
-                        reason = f"{top_user['name']} {action_verb} for this event"
-                    else:
-                        reason = f"{top_user['name']} and {len(unique_users) - 1} other connection{'s' if len(unique_users) > 2 else ''} interacted with this event"
+        feed = feed[:limit]
 
-                    event["social_context"] = {
-                        "reason": reason,
-                        "users": unique_users
-                    }
-                    social_feed_items.append(event)
-
-        # Fallback section: If social feed items < limit, add upcoming approved events
-        existing_eids = {item["event_id"] for item in social_feed_items}
-        if len(social_feed_items) < limit:
-            remaining_limit = limit - len(social_feed_items)
-            today = utc_now().strftime("%Y-%m-%d")
-            
-            fallback_cursor = db.events.find({
+        if len(feed) < limit:
+            exclude = [e["event_id"] for e in feed]
+            fallback = await db.events.find({
                 "status": "approved",
-                "event_id": {"$nin": list(existing_eids)}
-            }).sort("date", 1).limit(remaining_limit)
-            
-            fallback_events = await fallback_cursor.to_list(length=remaining_limit)
-            for fe in fallback_events:
-                fe["social_context"] = None
-                social_feed_items.append(fe)
+                "event_id": {"$nin": exclude},
+                "date": {"$gte": today},
+            }).sort([("date", 1), ("start_time", 1)]).limit(limit - len(feed)).to_list(length=limit)
+            for event in fallback:
+                event["social_context"] = None
+                feed.append(event)
 
-        return social_feed_items[:limit]
+        await EventService._attach_host_names(feed)
+        await EventService.attach_interaction_stats(feed, user_id)
+        return feed

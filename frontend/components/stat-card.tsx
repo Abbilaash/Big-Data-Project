@@ -8,17 +8,16 @@ type StatCardProps = {
   icon: LucideIcon
 }
 
+/** Large numeral with a small mono caption (display-type stat block). */
 export function StatCard({ label, value, icon: Icon }: StatCardProps) {
   return (
     <Card>
-      <CardContent className="flex flex-col items-start gap-3 p-4 sm:flex-row sm:items-center sm:gap-4 sm:p-5">
-        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary sm:h-11 sm:w-11">
-          <Icon className="h-5 w-5" />
-        </span>
+      <CardContent className="flex items-start justify-between gap-3 p-5">
         <div className="min-w-0">
-          <p className="text-2xl font-bold leading-none">{value}</p>
-          <p className="mt-1 text-sm leading-snug text-muted-foreground">{label}</p>
+          <p className="text-4xl font-bold leading-none tracking-tight tabular-nums">{value}</p>
+          <p className="mt-3 font-mono text-xs lowercase tracking-wider text-muted-foreground">{label}</p>
         </div>
+        <Icon className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
       </CardContent>
     </Card>
   )

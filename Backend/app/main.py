@@ -6,9 +6,12 @@ from fastapi.responses import JSONResponse
 
 from app.config import get_settings
 from app.database.mongodb import connect_to_mongo, close_mongo_connection, db_manager
-from app.database.neo4j import connect_to_neo4j, close_neo4j_connection, neo4j_manager
+from app.database.neo4j import (
+    connect_to_neo4j, close_neo4j_connection, check_neo4j_health, GraphUnavailableError
+)
 from app.database.init_db import initialize_databases
 
+from app.utils.errors import NotFoundError, ConflictError
 from app.routes import auth, users, events, social, feed, admin, comments
 
 # Configure logging
@@ -21,6 +24,16 @@ logger = logging.getLogger("campusconnect.main")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Initializing CampusConnect Backend...")
+    problems = get_settings().validate_for_runtime()
+    if problems:
+        for problem in problems:
+            logger.critical(f"Configuration error: {problem}")
+        raise RuntimeError("Invalid production configuration: " + "; ".join(problems))
+    if get_settings().ENABLE_DEV_LOGIN:
+        if get_settings().dev_login_enabled:
+            logger.warning("ENABLE_DEV_LOGIN is on: /api/auth/dev-login is available. Development only.")
+        else:
+            logger.warning("ENABLE_DEV_LOGIN is ignored because ENVIRONMENT=production.")
     # 1. Connect MongoDB
     await connect_to_mongo()
     # 2. Connect Neo4j
@@ -46,37 +59,63 @@ app = FastAPI(
 )
 
 # CORS Middleware
-origins = [origin.strip() for origin in settings.FRONTEND_URL.split(",")]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=settings.frontend_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
 )
 
-# Exception Handler
+# Exception handlers
+@app.exception_handler(GraphUnavailableError)
+async def graph_unavailable_handler(request: Request, exc: GraphUnavailableError):
+    logger.error(f"Graph database unavailable on {request.url.path}: {exc}")
+    return JSONResponse(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        content={
+            "success": False,
+            "message": "The social graph service is temporarily unavailable. Please try again shortly.",
+            "detail": "The social graph service is temporarily unavailable. Please try again shortly.",
+        },
+    )
+
+@app.exception_handler(NotFoundError)
+async def not_found_handler(request: Request, exc: NotFoundError):
+    return JSONResponse(status_code=status.HTTP_404_NOT_FOUND, content={"success": False, "detail": str(exc)})
+
+@app.exception_handler(ConflictError)
+async def conflict_handler(request: Request, exc: ConflictError):
+    return JSONResponse(status_code=status.HTTP_409_CONFLICT, content={"success": False, "detail": str(exc)})
+
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
-    logger.error(f"Unhandled Exception on {request.url}: {exc}", exc_info=True)
+    # Full details go to the server log only; clients get a generic message.
+    logger.error(f"Unhandled exception on {request.url.path}: {exc}", exc_info=True)
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         content={
             "success": False,
             "message": "An internal server error occurred",
-            "errors": str(exc)
-        }
+            "detail": "An internal server error occurred",
+        },
     )
 
 # Health Check
 @app.get("/health", tags=["Health"], summary="Health Check Endpoint")
 async def health_check():
-    mongo_status = "connected" if db_manager.client is not None else "disconnected"
-    neo4j_status = "connected" if neo4j_manager.driver is not None else "disconnected"
+    mongo_status = "disconnected"
+    if db_manager.client is not None:
+        try:
+            await db_manager.client.admin.command("ping")
+            mongo_status = "connected"
+        except Exception:
+            mongo_status = "disconnected"
+    neo4j_status = "connected" if await check_neo4j_health() else "disconnected"
     return {
         "status": "ok" if mongo_status == "connected" and neo4j_status == "connected" else "degraded",
         "mongodb": mongo_status,
-        "neo4j": neo4j_status
+        "neo4j": neo4j_status,
     }
 
 # Include Routers

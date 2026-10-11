@@ -1,6 +1,7 @@
 import logging
 from typing import Dict, Any, List
 from app.database.mongodb import get_database
+from app.utils.errors import NotFoundError
 from app.utils.helpers import generate_comment_id, utc_now
 
 logger = logging.getLogger("campusconnect.comment_service")
@@ -11,7 +12,7 @@ class CommentService:
         db = get_database()
         event = await db.events.find_one({"event_id": event_id, "status": "approved"})
         if not event:
-            raise ValueError("Approved event not found")
+            raise NotFoundError("Approved event not found")
 
         comment_id = generate_comment_id()
         now = utc_now()
@@ -33,6 +34,8 @@ class CommentService:
     @staticmethod
     async def get_event_comments(event_id: str) -> List[Dict[str, Any]]:
         db = get_database()
+        if not await db.events.find_one({"event_id": event_id, "status": "approved"}, {"_id": 1}):
+            raise NotFoundError("Approved event not found")
         cursor = db.comments.find({"event_id": event_id}).sort("created_at", 1)
         comments = await cursor.to_list(length=200)
 
@@ -51,3 +54,14 @@ class CommentService:
             c["user_picture"] = user.get("profile_picture") if user else None
             result.append(c)
         return result
+
+    @staticmethod
+    async def delete_comment(event_id: str, comment_id: str, user: Dict[str, Any]) -> None:
+        """Authors may delete their own comments; admins may delete any."""
+        db = get_database()
+        comment = await db.comments.find_one({"comment_id": comment_id, "event_id": event_id})
+        if not comment:
+            raise NotFoundError("Comment not found")
+        if comment["user_id"] != user["user_id"] and user.get("role") != "ADMIN":
+            raise PermissionError("You can only delete your own comments")
+        await db.comments.delete_one({"comment_id": comment_id})

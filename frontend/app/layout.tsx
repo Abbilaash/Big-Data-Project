@@ -2,12 +2,14 @@ import { Analytics } from '@vercel/analytics/next'
 import type { Metadata, Viewport } from 'next'
 import './globals.css'
 import { Navbar } from '@/components/navbar'
+import { AuthProvider } from '@/lib/auth'
+import { AuthGate } from '@/components/auth-gate'
+import { ToastProvider } from '@/components/toast'
 
 export const metadata: Metadata = {
-  title: 'CampusConnect — Student Events & Networking',
+  title: 'CampusConnect — Campus Events & Networking',
   description:
-    'CampusConnect helps students discover campus events, find teammates, and connect with fellow students.',
-  generator: 'v0.app',
+    'CampusConnect helps students discover campus events, see what their connections are attending, and build their network.',
   icons: {
     icon: [
       {
@@ -28,8 +30,8 @@ export const metadata: Metadata = {
 }
 
 export const viewport: Viewport = {
-  colorScheme: 'light',
-  themeColor: '#ffffff',
+  colorScheme: 'dark light',
+  themeColor: '#12141f',
 }
 
 export default function RootLayout({
@@ -38,11 +40,23 @@ export default function RootLayout({
   children: React.ReactNode
 }>) {
   return (
-    <html lang="en">
+    <html lang="en" className="dark" suppressHydrationWarning>
       <body className="antialiased">
-        <Navbar />
-        <main className="mx-auto max-w-6xl px-4 py-8">{children}</main>
-        {process.env.NODE_ENV === 'production' && <Analytics />}
+        <a
+          href="#main"
+          className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-[70] focus:rounded-md focus:bg-primary focus:px-3 focus:py-2 focus:text-primary-foreground"
+        >
+          Skip to content
+        </a>
+        <AuthProvider>
+          <ToastProvider>
+            <Navbar />
+            <main id="main" className="mx-auto max-w-6xl px-4 py-8">
+              <AuthGate>{children}</AuthGate>
+            </main>
+          </ToastProvider>
+        </AuthProvider>
+        {process.env.VERCEL === '1' && <Analytics />}
       </body>
     </html>
   )

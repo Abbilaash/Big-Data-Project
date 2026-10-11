@@ -25,15 +25,12 @@ async def add_comment(
     body: CommentCreateRequest,
     current_user: dict = Depends(get_current_active_user)
 ):
-    try:
-        comment = await CommentService.add_comment(
-            event_id=event_id,
-            user_id=current_user["user_id"],
-            content=body.content
-        )
-        return ApiResponse(message="Comment added successfully", data=format_comment_response(comment))
-    except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    comment = await CommentService.add_comment(
+        event_id=event_id,
+        user_id=current_user["user_id"],
+        content=body.content.strip(),
+    )
+    return ApiResponse(message="Comment added successfully", data=format_comment_response(comment))
 
 @router.get("/{event_id}/comments", response_model=ApiResponse[List[CommentResponse]], summary="Get Comments for Event")
 async def get_comments(
@@ -43,3 +40,16 @@ async def get_comments(
     comments = await CommentService.get_event_comments(event_id)
     data = [format_comment_response(c) for c in comments]
     return ApiResponse(message="Event comments retrieved", data=data)
+
+
+@router.delete("/{event_id}/comments/{comment_id}", response_model=ApiResponse[dict], summary="Delete a Comment")
+async def delete_comment(
+    event_id: str,
+    comment_id: str,
+    current_user: dict = Depends(get_current_active_user)
+):
+    try:
+        await CommentService.delete_comment(event_id, comment_id, current_user)
+    except PermissionError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    return ApiResponse(message="Comment deleted", data={"comment_id": comment_id})

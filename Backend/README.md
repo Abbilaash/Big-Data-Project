@@ -1,5 +1,11 @@
 # CampusConnect Backend
 
+> **Current documentation lives in [`../docs/`](../docs/)** — see
+> [API.md](../docs/API.md), [ARCHITECTURE.md](../docs/ARCHITECTURE.md) and
+> [SETUP.md](../docs/SETUP.md). This README is the original backend overview and
+> predates several changes (signed OAuth state, fragment token delivery, 404/409
+> semantics, new endpoints); where they differ, `docs/` is authoritative.
+
 CampusConnect is a social-media-style college event discovery platform powered by a hybrid database architecture combining **MongoDB** and **Neo4j**.
 
 ---

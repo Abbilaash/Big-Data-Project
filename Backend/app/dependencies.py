@@ -1,6 +1,6 @@
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 from app.utils.security import decode_access_token
 from app.database.mongodb import get_database
@@ -57,4 +57,22 @@ async def get_current_admin(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admin privileges required"
         )
+    return user
+
+
+async def get_optional_user(
+    credentials: HTTPAuthorizationCredentials = Depends(security_scheme)
+) -> Optional[Dict[str, Any]]:
+    """Resolve the caller when a valid token is present; never raises.
+
+    Used by public endpoints that personalise their response for signed-in users.
+    """
+    if not credentials:
+        return None
+    payload = decode_access_token(credentials.credentials)
+    if not payload or "user_id" not in payload:
+        return None
+    user = await get_database().users.find_one({"user_id": payload["user_id"]})
+    if not user or not user.get("profile_completed", False):
+        return None
     return user

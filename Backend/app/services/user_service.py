@@ -27,7 +27,7 @@ class UserService:
         OPTIONAL MATCH (u)-[:FOLLOWS]->(following:User)
         RETURN count(DISTINCT follower) AS followers_count, count(DISTINCT following) AS following_count
         """
-        records = await execute_query(cypher_counts, {"user_id": user_id})
+        records = await execute_query(cypher_counts, {"user_id": user_id}, required=False)
         followers_count = records[0]["followers_count"] if records else 0
         following_count = records[0]["following_count"] if records else 0
 
@@ -44,11 +44,10 @@ class UserService:
     @staticmethod
     async def update_profile(user_id: str, updates: Dict[str, Any]) -> Dict[str, Any]:
         db = get_database()
-        updates["updated_at"] = utc_now()
-        
-        # Remove None values
+        # Remove None values (a partial update never clears a field)
         clean_updates = {k: v for k, v in updates.items() if v is not None}
-        
+        clean_updates["updated_at"] = utc_now()
+
         await db.users.update_one({"user_id": user_id}, {"$set": clean_updates})
         updated_user = await db.users.find_one({"user_id": user_id})
 
@@ -58,7 +57,10 @@ class UserService:
             MATCH (u:User {user_id: $user_id})
             SET u.name = $name
             """
-            await execute_query(cypher_update, {"user_id": user_id, "name": clean_updates["name"]})
+            # Mongo is the source of truth for names; the graph copy is best-effort.
+            await execute_query(
+                cypher_update, {"user_id": user_id, "name": clean_updates["name"]}, required=False
+            )
 
         return updated_user
 
@@ -69,8 +71,8 @@ class UserService:
         query = {
             "profile_completed": True,
             "$or": [
+                # Email is not searchable: it is never shown publicly.
                 {"name": regex_pattern},
-                {"email": regex_pattern},
                 {"department": regex_pattern}
             ]
         }
@@ -80,6 +82,7 @@ class UserService:
             {
                 "user_id": u["user_id"],
                 "name": u["name"],
+                "year": u.get("year"),
                 "department": u.get("department"),
                 "profile_picture": u.get("profile_picture")
             }
