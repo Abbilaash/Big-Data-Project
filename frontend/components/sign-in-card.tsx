@@ -1,152 +1,270 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useState } from "react"
+import { useRouter } from "next/navigation"
 
 import { api, ApiError } from "@/lib/api"
 import { useAuth } from "@/lib/auth"
+import { DEPARTMENTS, YEARS } from "@/lib/constants"
+import { yearLabel } from "@/lib/format"
 import { errorMessage } from "@/lib/use-async"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { LinkButton } from "@/components/link-button"
+import { SelectField } from "@/components/select-field"
 import { Spinner } from "@/components/state-views"
 
-function GoogleMark() {
-  return (
-    <svg viewBox="0 0 48 48" className="h-4 w-4" aria-hidden>
-      <path
-        fill="#EA4335"
-        d="M24 9.5c3.5 0 6.6 1.2 9.1 3.6l6.8-6.8C35.8 2.4 30.3 0 24 0 14.6 0 6.5 5.4 2.6 13.2l7.9 6.1C12.4 13.5 17.7 9.5 24 9.5z"
-      />
-      <path
-        fill="#4285F4"
-        d="M46.5 24.5c0-1.6-.1-3.1-.4-4.5H24v9h12.7c-.6 3-2.3 5.5-4.8 7.2l7.5 5.8c4.4-4.1 7.1-10.1 7.1-17.5z"
-      />
-      <path
-        fill="#FBBC05"
-        d="M10.5 28.7a14.5 14.5 0 0 1 0-9.4l-7.9-6.1a24 24 0 0 0 0 21.6l7.9-6.1z"
-      />
-      <path
-        fill="#34A853"
-        d="M24 48c6.5 0 11.9-2.1 15.9-5.8l-7.5-5.8c-2.1 1.4-4.9 2.3-8.4 2.3-6.3 0-11.6-4-13.5-9.8l-7.9 6.1C6.5 42.6 14.6 48 24 48z"
-      />
-    </svg>
-  )
-}
-
-export function SignInCard() {
+export function SignInCard({ defaultMode = "login" }: { defaultMode?: "login" | "register" } = {}) {
+  const router = useRouter()
   const { signIn } = useAuth()
-  const [notice, setNotice] = useState<string | null>(null)
-  const [devEnabled, setDevEnabled] = useState(false)
-  const [email, setEmail] = useState("")
-  const [name, setName] = useState("")
+  const [mode, setMode] = useState<"login" | "register">(defaultMode)
+
+  // Login form state
+  const [loginEmail, setLoginEmail] = useState("")
+  const [loginPassword, setLoginPassword] = useState("")
+
+  // Register form state
+  const [regName, setRegName] = useState("")
+  const [regEmail, setRegEmail] = useState("")
+  const [regPassword, setRegPassword] = useState("")
+  const [regYear, setRegYear] = useState("1")
+  const [regDepartment, setRegDepartment] = useState("CSE")
+
   const [busy, setBusy] = useState(false)
-  const [formError, setFormError] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
 
-  // The backend reports OAuth failures in the URL fragment.
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.hash.replace(/^#/, ""))
-    const err = params.get("error")
-    if (err) {
-      setNotice(err)
-      window.history.replaceState(null, "", window.location.pathname)
-    }
-  }, [])
-
-  useEffect(() => {
-    let cancelled = false
-    api
-      .authConfig()
-      .then((cfg) => !cancelled && setDevEnabled(cfg.dev_login_enabled))
-      .catch(() => {
-        /* backend unreachable: the Google link is still shown */
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [])
-
-  const onDevLogin = async (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
-    setFormError(null)
+    setError(null)
     setBusy(true)
     try {
-      const result = await api.devLogin(email.trim(), name.trim())
+      const result = await api.login(loginEmail.trim(), loginPassword)
       await signIn(result.access_token)
+      router.push("/")
     } catch (err) {
-      setFormError(
-        err instanceof ApiError && err.status === 404
-          ? "Developer sign-in is not enabled on the server."
-          : errorMessage(err),
-      )
+      setError(errorMessage(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const handleRegister = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setError(null)
+    if (!regName.trim()) {
+      setError("Please enter your full name.")
+      return
+    }
+    if (regPassword.length < 6) {
+      setError("Password must be at least 6 characters.")
+      return
+    }
+
+    setBusy(true)
+    try {
+      const result = await api.registerUser({
+        name: regName.trim(),
+        email: regEmail.trim(),
+        password: regPassword,
+        year: Number(regYear),
+        department: regDepartment,
+      })
+      await signIn(result.access_token)
+      router.push("/")
+    } catch (err) {
+      setError(errorMessage(err))
     } finally {
       setBusy(false)
     }
   }
 
   return (
-    <section id="signin" className="rounded-lg border bg-card p-6 sm:p-8">
-      <h2 className="text-xl font-semibold">Sign in</h2>
-      <p className="mt-1 text-sm text-muted-foreground">Use your Google account to continue.</p>
+    <section id="auth-card" className="rounded-2xl border bg-card p-6 shadow-sm sm:p-8">
+      {/* Mode Toggle Tabs */}
+      <div className="flex rounded-lg border bg-muted/40 p-1">
+        <button
+          type="button"
+          onClick={() => {
+            setMode("login")
+            setError(null)
+          }}
+          className={`flex-1 rounded-md py-1.5 text-center text-sm font-medium transition-all ${
+            mode === "login"
+              ? "bg-background text-foreground shadow-sm"
+              : "text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          Sign In
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            setMode("register")
+            setError(null)
+          }}
+          className={`flex-1 rounded-md py-1.5 text-center text-sm font-medium transition-all ${
+            mode === "register"
+              ? "bg-background text-foreground shadow-sm"
+              : "text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          Register Now
+        </button>
+      </div>
 
-      {notice ? (
-        <p role="alert" className="mt-4 rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm">
-          {notice}
-        </p>
-      ) : null}
-
-      <LinkButton
-        size="lg"
-        variant="outline"
-        className="mt-6 h-10 w-full text-sm"
-        href={api.googleLoginUrl()}
-        external
-      >
-        <GoogleMark /> Continue with Google
-      </LinkButton>
-
-      {devEnabled ? (
-        <form onSubmit={onDevLogin} className="mt-8 space-y-4 border-t pt-6">
+      {mode === "login" ? (
+        /* Sign In Form */
+        <form onSubmit={handleLogin} className="mt-6 space-y-4">
           <div>
-            <h3 className="text-sm font-semibold">Developer sign-in</h3>
-            <p className="text-xs text-muted-foreground">
-              Enabled by <code className="font-mono">ENABLE_DEV_LOGIN</code> on this server. Never available in
-              production. Use the configured <code className="font-mono">ADMIN_EMAIL</code> to get admin access.
-            </p>
+            <h2 className="text-xl font-semibold tracking-tight">Welcome back</h2>
+            <p className="mt-1 text-sm text-muted-foreground">Sign in with your email and password.</p>
           </div>
+
           <div className="space-y-1.5">
-            <Label htmlFor="dev-email">Email</Label>
+            <Label htmlFor="login-email">Email Address</Label>
             <Input
-              id="dev-email"
+              id="login-email"
               type="email"
               autoComplete="email"
               required
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="you@example.com"
+              value={loginEmail}
+              onChange={(e) => setLoginEmail(e.target.value)}
+              placeholder="student@college.edu"
             />
           </div>
+
           <div className="space-y-1.5">
-            <Label htmlFor="dev-name">Name</Label>
+            <Label htmlFor="login-password">Password</Label>
             <Input
-              id="dev-name"
+              id="login-password"
+              type="password"
+              autoComplete="current-password"
               required
-              maxLength={100}
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Your name"
+              value={loginPassword}
+              onChange={(e) => setLoginPassword(e.target.value)}
+              placeholder="••••••••"
             />
           </div>
-          {formError ? (
-            <p role="alert" className="text-sm text-destructive">
-              {formError}
+
+          {error ? (
+            <p role="alert" className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
+              {error}
             </p>
           ) : null}
-          <Button type="submit" size="lg" className="h-10 w-full text-sm" disabled={busy}>
-            {busy ? <Spinner /> : null} Sign in (development)
+
+          <Button type="submit" size="lg" className="h-10 w-full text-sm font-medium" disabled={busy}>
+            {busy ? <Spinner className="mr-2" /> : null} Sign In
           </Button>
+
+          <p className="pt-2 text-center text-sm text-muted-foreground">
+            Don&apos;t have an account?{" "}
+            <button
+              type="button"
+              onClick={() => {
+                setMode("register")
+                setError(null)
+              }}
+              className="font-medium text-primary underline underline-offset-4 hover:opacity-80"
+            >
+              Register now
+            </button>
+          </p>
         </form>
-      ) : null}
+      ) : (
+        /* Register Now Form */
+        <form onSubmit={handleRegister} className="mt-6 space-y-4">
+          <div>
+            <h2 className="text-xl font-semibold tracking-tight">Create your account</h2>
+            <p className="mt-1 text-sm text-muted-foreground">Join CampusConnect with your details.</p>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="reg-name">Full Name</Label>
+            <Input
+              id="reg-name"
+              required
+              maxLength={100}
+              value={regName}
+              onChange={(e) => setRegName(e.target.value)}
+              placeholder="Arun Kumar"
+            />
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="reg-email">Email Address</Label>
+            <Input
+              id="reg-email"
+              type="email"
+              autoComplete="email"
+              required
+              value={regEmail}
+              onChange={(e) => setRegEmail(e.target.value)}
+              placeholder="arun@college.edu"
+            />
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="reg-password">Password</Label>
+            <Input
+              id="reg-password"
+              type="password"
+              autoComplete="new-password"
+              required
+              minLength={6}
+              value={regPassword}
+              onChange={(e) => setRegPassword(e.target.value)}
+              placeholder="Min 6 characters"
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="reg-year">Year</Label>
+              <SelectField
+                id="reg-year"
+                value={regYear}
+                onChange={setRegYear}
+                options={YEARS.map((y) => ({ value: String(y), label: yearLabel(y) }))}
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="reg-dept">Department</Label>
+              <SelectField
+                id="reg-dept"
+                value={regDepartment}
+                onChange={setRegDepartment}
+                options={DEPARTMENTS.map((d) => ({ value: d, label: d }))}
+              />
+            </div>
+          </div>
+
+          {error ? (
+            <p role="alert" className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
+              {error}
+            </p>
+          ) : null}
+
+          <Button type="submit" size="lg" className="h-10 w-full text-sm font-medium" disabled={busy}>
+            {busy ? <Spinner className="mr-2" /> : null} Register Now
+          </Button>
+
+          <p className="pt-2 text-center text-sm text-muted-foreground">
+            Already have an account?{" "}
+            <button
+              type="button"
+              onClick={() => {
+                setMode("login")
+                setError(null)
+              }}
+              className="font-medium text-primary underline underline-offset-4 hover:opacity-80"
+            >
+              Sign in
+            </button>
+          </p>
+        </form>
+      )}
     </section>
   )
 }
+

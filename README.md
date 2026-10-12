@@ -14,7 +14,7 @@ powers the personalised feed, suggestions and network analytics.
 
 ## What it does
 
-- Sign in with Google, finish a short profile.
+- Register & Sign in with email and password.
 - Browse, search and filter approved events; like, register, share, comment.
 - Submit events; admins approve or reject them in a review queue.
 - Follow classmates; your feed ranks events by what your connections
@@ -31,5 +31,3 @@ python run.py                              # http://localhost:8000/docs
 cd ../frontend && pnpm install && pnpm dev # http://localhost:3000
 ```
 
-Full instructions, environment variables and the dev-login option for running
-without Google credentials: [docs/SETUP.md](docs/SETUP.md).

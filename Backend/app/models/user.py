@@ -4,8 +4,8 @@ from datetime import datetime
 
 class UserModel(BaseModel):
     user_id: str
-    google_id: Optional[str] = None
     email: EmailStr
+    password_hash: Optional[str] = None
     name: str
     year: Optional[int] = None
     department: Optional[str] = None
@@ -14,3 +14,4 @@ class UserModel(BaseModel):
     profile_completed: bool = False
     created_at: datetime
     updated_at: datetime
+

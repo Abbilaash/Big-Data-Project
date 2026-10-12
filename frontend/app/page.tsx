@@ -29,7 +29,8 @@ function SectionHeading({ title, href, hrefLabel }: { title: string; href?: stri
 
 export default function DashboardPage() {
   const me = useCurrentUser()
-  const feed = useAsync(() => api.feed(9), [])
+  const recommended = useAsync(() => api.feed({ limit: 6, fallback: false }), [])
+  const generalEvents = useAsync(() => api.upcoming(6), [])
   const registered = useAsync(() => api.myRegistered(), [])
   const hosted = useAsync(() => api.myHosted(), [])
   const profile = useAsync(() => api.user(me.user_id), [me.user_id])
@@ -37,7 +38,6 @@ export default function DashboardPage() {
 
   const upcomingRegistered = (registered.data ?? []).slice(0, 3)
   const firstName = me.name.split(" ")[0]
-  const hasSocialItems = (feed.data ?? []).some((e) => e.social_context)
 
   return (
     <div className="space-y-10">
@@ -60,13 +60,56 @@ export default function DashboardPage() {
         <StatCard label="Followers" value={profile.data?.followers_count ?? "–"} icon={Users} />
       </section>
 
-      <section>
-        <SectionHeading title="Your feed" href="/events" hrefLabel="Browse all events" />
-        {feed.loading ? (
+      {/* 1. SEPARATE SECTION: Recommended Events based on connections */}
+      <section id="recommended-events" className="rounded-2xl border bg-card/60 p-6 shadow-sm">
+        <div className="mb-4">
+          <div className="flex items-center justify-between">
+            <h2 className="text-xl font-semibold tracking-tight text-foreground">
+              Recommended Events for You
+            </h2>
+            <span className="rounded-full bg-primary/10 px-3 py-1 text-xs font-medium text-primary">
+              Personalized via Network Graph
+            </span>
+          </div>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Events liked, registered for, or shared by the students you follow or who follow you.
+          </p>
+        </div>
+
+        {recommended.loading ? (
           <CardGridSkeleton count={3} />
-        ) : feed.error ? (
-          <ErrorState error={feed.error} onRetry={feed.reload} title="Couldn't load your feed" />
-        ) : (feed.data ?? []).length === 0 ? (
+        ) : recommended.error ? (
+          <ErrorState error={recommended.error} onRetry={recommended.reload} title="Couldn't load recommendations" />
+        ) : (recommended.data ?? []).length === 0 ? (
+          <div className="rounded-xl border border-dashed p-8 text-center">
+            <p className="font-medium text-muted-foreground">No personalized recommendations yet</p>
+            <p className="mt-1 text-sm text-muted-foreground">
+              When classmates you follow or who follow you like or register for events, they will appear here.
+            </p>
+            <LinkButton href="/people" variant="outline" size="sm" className="mt-4">
+              Find and follow students
+            </LinkButton>
+          </div>
+        ) : (
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {(recommended.data ?? []).map((event) => (
+              <EventCard key={event.event_id} event={event} reason={event.social_context?.reason} />
+            ))}
+          </div>
+        )}
+      </section>
+
+      {/* 2. SEPARATE SECTION: General Campus Events */}
+      <section id="general-events">
+        <SectionHeading title="General Campus Events" href="/events" hrefLabel="View all events" />
+        <p className="mb-4 text-sm text-muted-foreground">
+          All approved upcoming workshops, hackathons, and gatherings across PSG Tech.
+        </p>
+        {generalEvents.loading ? (
+          <CardGridSkeleton count={3} />
+        ) : generalEvents.error ? (
+          <ErrorState error={generalEvents.error} onRetry={generalEvents.reload} title="Couldn't load campus events" />
+        ) : (generalEvents.data ?? []).length === 0 ? (
           <EmptyState
             title="No upcoming events yet"
             description="When events are approved they'll show up here. Be the first to host one."
@@ -77,19 +120,11 @@ export default function DashboardPage() {
             }
           />
         ) : (
-          <>
-            {!hasSocialItems ? (
-              <p className="mb-3 text-sm text-muted-foreground">
-                Follow people to see what they&apos;re registering for, liking and sharing — it&apos;ll shape this
-                feed.
-              </p>
-            ) : null}
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {(feed.data ?? []).map((event) => (
-                <EventCard key={event.event_id} event={event} reason={event.social_context?.reason} />
-              ))}
-            </div>
-          </>
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {(generalEvents.data ?? []).map((event) => (
+              <EventCard key={event.event_id} event={event} />
+            ))}
+          </div>
         )}
       </section>
 
