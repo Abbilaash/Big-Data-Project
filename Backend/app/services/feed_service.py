@@ -38,7 +38,7 @@ def build_reason(unique_users: List[Dict[str, Any]]) -> str:
 
 class FeedService:
     @staticmethod
-    async def get_personalized_feed(user_id: str, limit: int = 20) -> List[Dict[str, Any]]:
+    async def get_personalized_feed(user_id: str, limit: int = 20, include_fallback: bool = True) -> List[Dict[str, Any]]:
         """
         1. Neo4j: events interacted with by people I follow.
         2. Rank by summed action weight.
@@ -48,8 +48,10 @@ class FeedService:
         """
         records = await execute_query(
             """
-            MATCH (:User {user_id: $user_id})-[:FOLLOWS]->(friend:User)-[r:LIKED|REGISTERED|SHARED|VIEWED]->(e:Event)
-            RETURN e.event_id AS event_id, friend.user_id AS friend_id, type(r) AS interaction_type
+            MATCH (friend:User)-[:FOLLOWS]-(me:User {user_id: $user_id})
+            WHERE friend.user_id <> $user_id
+            MATCH (friend)-[r:LIKED|REGISTERED|SHARED|VIEWED]->(e:Event)
+            RETURN DISTINCT e.event_id AS event_id, friend.user_id AS friend_id, type(r) AS interaction_type
             """,
             {"user_id": user_id},
             required=False,
@@ -106,7 +108,7 @@ class FeedService:
 
         feed = feed[:limit]
 
-        if len(feed) < limit:
+        if include_fallback and len(feed) < limit:
             exclude = [e["event_id"] for e in feed]
             fallback = await db.events.find({
                 "status": "approved",

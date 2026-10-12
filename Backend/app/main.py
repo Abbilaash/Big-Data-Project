@@ -29,11 +29,7 @@ async def lifespan(app: FastAPI):
         for problem in problems:
             logger.critical(f"Configuration error: {problem}")
         raise RuntimeError("Invalid production configuration: " + "; ".join(problems))
-    if get_settings().ENABLE_DEV_LOGIN:
-        if get_settings().dev_login_enabled:
-            logger.warning("ENABLE_DEV_LOGIN is on: /api/auth/dev-login is available. Development only.")
-        else:
-            logger.warning("ENABLE_DEV_LOGIN is ignored because ENVIRONMENT=production.")
+
     # 1. Connect MongoDB
     await connect_to_mongo()
     # 2. Connect Neo4j
@@ -63,8 +59,8 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.frontend_origins,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type"],
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # Exception handlers

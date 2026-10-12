@@ -16,21 +16,14 @@ class Settings(BaseSettings):
     NEO4J_USERNAME: str = "neo4j"
     NEO4J_PASSWORD: str = PLACEHOLDER_NEO4J_PASSWORD
 
-    GOOGLE_CLIENT_ID: str = "your_google_client_id"
-    GOOGLE_CLIENT_SECRET: str = "your_google_client_secret"
-    GOOGLE_REDIRECT_URI: str = "http://localhost:8000/api/auth/google/callback"
-
     JWT_SECRET_KEY: str = PLACEHOLDER_JWT_SECRET
     JWT_ALGORITHM: str = "HS256"
     JWT_EXPIRE_MINUTES: int = 1440
 
-    # Next.js dev server runs on 3000. Comma-separated list is allowed for CORS;
-    # the first entry is used for post-login redirects.
+    # Next.js dev server runs on 3000. Comma-separated list is allowed for CORS
     FRONTEND_URL: str = "http://localhost:3000"
     ADMIN_EMAIL: str = "admin@example.com"
 
-    # Development-only login that skips Google. Never honoured in production.
-    ENABLE_DEV_LOGIN: bool = False
 
     model_config = SettingsConfigDict(
         env_file=str(Path(__file__).parent.parent / ".env"),
@@ -44,18 +37,26 @@ class Settings(BaseSettings):
 
     @property
     def frontend_origins(self) -> list[str]:
-        return [o.strip().rstrip("/") for o in self.FRONTEND_URL.split(",") if o.strip()]
+        origins = [o.strip().rstrip("/") for o in self.FRONTEND_URL.split(",") if o.strip()]
+        if not self.is_production:
+            dev_defaults = [
+                "http://localhost:3000",
+                "http://127.0.0.1:3000",
+                "http://localhost:5173",
+                "http://127.0.0.1:5173",
+            ]
+            for d in dev_defaults:
+                if d not in origins:
+                    origins.append(d)
+        return origins
 
     @property
     def primary_frontend_url(self) -> str:
         origins = self.frontend_origins
         return origins[0] if origins else "http://localhost:3000"
 
-    @property
-    def dev_login_enabled(self) -> bool:
-        return self.ENABLE_DEV_LOGIN and not self.is_production
-
     def validate_for_runtime(self) -> list[str]:
+
         """Return fatal configuration problems (empty list means OK)."""
         problems: list[str] = []
         if self.is_production:

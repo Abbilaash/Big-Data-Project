@@ -20,7 +20,7 @@ import type {
   Role,
 } from "./types"
 
-export const API_URL = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000").replace(/\/$/, "")
+export const API_URL = (process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000").replace(/\/$/, "")
 
 const TOKEN_KEY = "cc_token"
 
@@ -132,7 +132,7 @@ export async function request<T>(path: string, opts: Options = {}): Promise<T> {
     const detail = (payload as { detail?: unknown } | null)?.detail
     if (res.status === 401) {
       if (token) unauthorizedHandler?.()
-      throw new ApiError(401, "Your session has expired. Please sign in again.")
+      throw new ApiError(401, typeof detail === "string" ? detail : "Invalid email or password.")
     }
     if (res.status === 422) {
       const { message, fields } = describeValidation(detail)
@@ -153,9 +153,25 @@ export async function request<T>(path: string, opts: Options = {}): Promise<T> {
 // ---- endpoints -------------------------------------------------------------
 export const api = {
   // auth
-  authConfig: () => request<{ dev_login_enabled: boolean }>("/api/auth/config", { token: null }),
-  devLogin: (email: string, name: string) =>
-    request<AuthTokenData>("/api/auth/dev-login", { method: "POST", body: { email, name }, token: null }),
+  login: (email: string, password: string) =>
+    request<AuthTokenData>("/api/auth/login", {
+      method: "POST",
+      body: { email, password },
+      token: null,
+    }),
+  registerUser: (body: {
+    name: string
+    email: string
+    password: string
+    year: number
+    department: string
+    profile_picture?: string | null
+  }) =>
+    request<AuthTokenData>("/api/auth/register", {
+      method: "POST",
+      body,
+      token: null,
+    }),
   completeProfile: (
     body: { name: string; year: number; department: string; profile_picture?: string | null },
     token?: string | null,
@@ -169,7 +185,7 @@ export const api = {
       role: Role
       profile_completed: boolean
     }>("/api/auth/session", { token }),
-  googleLoginUrl: () => `${API_URL}/api/auth/google/login`,
+
 
   // current user
   me: (token?: string | null) => request<CurrentUser>("/api/users/me", { token }),
@@ -217,7 +233,10 @@ export const api = {
     request(`/api/events/${eventId}/comments/${commentId}`, { method: "DELETE" }),
 
   // feed
-  feed: (limit = 12) => request<FeedItem[]>("/api/feed", { query: { limit } }),
+  feed: (q?: { limit?: number; fallback?: boolean } | number) => {
+    const query = typeof q === "number" ? { limit: q } : (q ?? { limit: 12 })
+    return request<FeedItem[]>("/api/feed", { query })
+  },
 
   // admin
   adminEvents: (status: "pending" | "approved" | "rejected") =>

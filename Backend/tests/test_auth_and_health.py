@@ -3,7 +3,7 @@ from urllib.parse import parse_qs, urlparse
 import pytest
 
 from app.config import Settings
-from app.utils.security import create_oauth_state, create_access_token
+from app.utils.security import create_access_token
 
 
 # ----------------------------------------------------------------- health
@@ -35,122 +35,96 @@ def test_production_accepts_real_secrets():
     assert s.validate_for_runtime() == []
 
 
-def test_dev_login_never_enabled_in_production():
-    s = Settings(ENVIRONMENT="production", ENABLE_DEV_LOGIN=True)
-    assert s.dev_login_enabled is False
-
-
-# ----------------------------------------------------------------- dev login
-async def test_dev_login_creates_incomplete_user_then_completes_profile(client):
-    r = await client.post("/api/auth/dev-login", json={"email": "ada@campus.test", "name": "Ada"})
+# ----------------------------------------------------------------- register & login
+async def test_register_creates_user_and_returns_token(client):
+    r = await client.post("/api/auth/register", json={
+        "name": "Ada Lovelace",
+        "email": "ada@campus.test",
+        "password": "secretpassword123",
+        "year": 2,
+        "department": "CSE"
+    })
     assert r.status_code == 200
     data = r.json()["data"]
-    assert data["profile_completed"] is False
+    assert data["profile_completed"] is True
     assert data["role"] == "USER"
+    assert "access_token" in data
     headers = {"Authorization": f"Bearer {data['access_token']}"}
 
-    # Incomplete profiles are blocked from app endpoints.
-    assert (await client.get("/api/users/me", headers=headers)).status_code == 403
-
-    r = await client.post(
-        "/api/auth/complete-profile", headers=headers,
-        json={"name": "Ada L", "year": 2, "department": "CSE"},
-    )
-    assert r.status_code == 200
-    assert r.json()["data"]["profile_completed"] is True
-    headers = {"Authorization": f"Bearer {r.json()['data']['access_token']}"}
     me = (await client.get("/api/users/me", headers=headers)).json()["data"]
-    assert me["name"] == "Ada L" and me["department"] == "CSE"
+    assert me["name"] == "Ada Lovelace"
+    assert me["department"] == "CSE"
+    assert me["year"] == 2
 
 
-async def test_session_endpoint_works_before_profile_completion(client):
-    r = await client.post("/api/auth/dev-login", json={"email": "s@campus.test", "name": "Sam Doe"})
-    headers = {"Authorization": f"Bearer {r.json()['data']['access_token']}"}
-    r = await client.get("/api/auth/session", headers=headers)
+async def test_register_duplicate_email_fails(client):
+    payload = {
+        "name": "First User",
+        "email": "unique@campus.test",
+        "password": "secretpassword123",
+        "year": 1,
+        "department": "ECE"
+    }
+    r = await client.post("/api/auth/register", json=payload)
     assert r.status_code == 200
-    body = r.json()["data"]
-    assert body["name"] == "Sam Doe" and body["profile_completed"] is False
+
+    r2 = await client.post("/api/auth/register", json=payload)
+    assert r2.status_code == 400
+    assert "already registered" in r2.json()["detail"].lower()
+
+
+async def test_login_success_and_wrong_password(client):
+    # Register user first
+    await client.post("/api/auth/register", json={
+        "name": "Login Tester",
+        "email": "tester@campus.test",
+        "password": "correct_password_here",
+        "year": 3,
+        "department": "MECH"
+    })
+
+    # Wrong password
+    bad_login = await client.post("/api/auth/login", json={
+        "email": "tester@campus.test",
+        "password": "wrong_password"
+    })
+    assert bad_login.status_code == 401
+
+    # Correct password
+    good_login = await client.post("/api/auth/login", json={
+        "email": "tester@campus.test",
+        "password": "correct_password_here"
+    })
+    assert good_login.status_code == 200
+    assert "access_token" in good_login.json()["data"]
+
+
+async def test_session_endpoint_works(client):
+    r = await client.post("/api/auth/register", json={
+        "name": "Sam Doe",
+        "email": "sam@campus.test",
+        "password": "passwordsam123",
+        "year": 1,
+        "department": "IT"
+    })
+    headers = {"Authorization": f"Bearer {r.json()['data']['access_token']}"}
+    sess = await client.get("/api/auth/session", headers=headers)
+    assert sess.status_code == 200
+    body = sess.json()["data"]
+    assert body["name"] == "Sam Doe" and body["profile_completed"] is True
     assert (await client.get("/api/auth/session")).status_code == 401
 
 
-async def test_dev_login_admin_email_gets_admin_role(client):
-    r = await client.post("/api/auth/dev-login", json={"email": "ADMIN@campus.test", "name": "Admin"})
-    assert r.json()["data"]["role"] == "ADMIN"
-
-
-async def test_dev_login_disabled_returns_404(client, monkeypatch):
-    from app.config import get_settings
-    monkeypatch.setattr(get_settings(), "ENABLE_DEV_LOGIN", False)
-    r = await client.post("/api/auth/dev-login", json={"email": "x@campus.test", "name": "X"})
-    assert r.status_code == 404
-
-
-async def test_complete_profile_succeeds_while_graph_down(client, graph):
-    """Onboarding must not depend on the graph (nodes are created lazily)."""
-    r = await client.post("/api/auth/dev-login", json={"email": "g@campus.test", "name": "G"})
-    headers = {"Authorization": f"Bearer {r.json()['data']['access_token']}"}
-    graph.available = False
-    r = await client.post("/api/auth/complete-profile", headers=headers,
-                          json={"name": "G", "year": 1, "department": "IT"})
+async def test_register_admin_email_gets_admin_role(client):
+    r = await client.post("/api/auth/register", json={
+        "name": "Admin User",
+        "email": "ADMIN@campus.test",
+        "password": "adminpassword123",
+        "year": 4,
+        "department": "CSE"
+    })
     assert r.status_code == 200
-
-
-# ----------------------------------------------------------------- oauth
-async def test_login_url_contains_signed_state(client):
-    r = await client.get("/api/auth/google/login", params={"redirect": "false"})
-    url = r.json()["data"]["authorization_url"]
-    state = parse_qs(urlparse(url).query)["state"][0]
-    from app.utils.security import verify_oauth_state
-    assert verify_oauth_state(state)
-
-
-async def test_callback_rejects_missing_or_forged_state(client):
-    """Regression: state used to be ignored, giving no CSRF protection."""
-    for params in ({"code": "abc"}, {"code": "abc", "state": "default_state"}):
-        r = await client.get("/api/auth/google/callback", params=params, follow_redirects=False)
-        assert r.status_code == 302
-        assert r.headers["location"].startswith("http://localhost:3000/login#error=")
-
-
-async def test_callback_rejects_access_token_used_as_state(client):
-    token = create_access_token({"user_id": "USR_X"})
-    r = await client.get("/api/auth/google/callback", params={"code": "abc", "state": token},
-                         follow_redirects=False)
-    assert "/login#error=" in r.headers["location"]
-
-
-async def test_callback_success_puts_token_in_fragment_not_query(client, monkeypatch):
-    from app.services.auth_service import AuthService
-
-    async def fake_exchange(code):
-        return {"id": "google-123", "email": "new@campus.test", "name": "New", "picture": ""}
-
-    monkeypatch.setattr(AuthService, "exchange_google_code", staticmethod(fake_exchange))
-    r = await client.get(
-        "/api/auth/google/callback",
-        params={"code": "abc", "state": create_oauth_state()},
-        follow_redirects=False,
-    )
-    assert r.status_code == 302
-    loc = urlparse(r.headers["location"])
-    assert loc.path == "/auth/callback"
-    assert loc.query == ""                       # token never in the query string
-    frag = parse_qs(loc.fragment)
-    assert frag["profile_completed"] == ["false"]
-    assert frag["token"][0].count(".") == 2     # JWT
-
-
-async def test_callback_does_not_leak_exception_text(client, monkeypatch):
-    from app.services.auth_service import AuthService
-
-    async def boom(code):
-        raise RuntimeError("secret internal detail 10.0.0.5")
-
-    monkeypatch.setattr(AuthService, "exchange_google_code", staticmethod(boom))
-    r = await client.get("/api/auth/google/callback",
-                         params={"code": "abc", "state": create_oauth_state()}, follow_redirects=False)
-    assert "secret" not in r.headers["location"]
-    assert "10.0.0.5" not in r.headers["location"]
+    assert r.json()["data"]["role"] == "ADMIN"
 
 
 # ----------------------------------------------------------------- auth guards

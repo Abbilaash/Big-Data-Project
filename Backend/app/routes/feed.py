@@ -14,9 +14,14 @@ router = APIRouter(prefix="/api/feed", tags=["Feed"])
 @router.get("", response_model=ApiResponse[List[FeedItemResponse]], summary="Get Personalized Hybrid Social Feed")
 async def get_social_feed(
     limit: int = Query(20, ge=1, le=50),
+    fallback: bool = Query(True, description="Whether to include general fallback events"),
     current_user: dict = Depends(get_current_active_user)
 ):
-    feed_events = await FeedService.get_personalized_feed(user_id=current_user["user_id"], limit=limit)
+    feed_events = await FeedService.get_personalized_feed(
+        user_id=current_user["user_id"],
+        limit=limit,
+        include_fallback=fallback
+    )
 
     items = []
     for e in feed_events:

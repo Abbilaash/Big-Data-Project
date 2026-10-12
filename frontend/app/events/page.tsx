@@ -2,12 +2,12 @@
 
 import { useEffect, useState } from "react"
 import Link from "next/link"
-import { CalendarSearch, Plus } from "lucide-react"
+import { CalendarSearch, Compass, Plus, Sparkles } from "lucide-react"
 
 import { api, type ApiError } from "@/lib/api"
 import { errorMessage } from "@/lib/use-async"
 import { useToast } from "@/components/toast"
-import type { EventItem } from "@/lib/types"
+import type { EventItem, FeedItem } from "@/lib/types"
 import { Button } from "@/components/ui/button"
 import { EventCard } from "@/components/event-card"
 import { PageHeader } from "@/components/page-header"
@@ -34,9 +34,26 @@ export default function EventsPage() {
   const [error, setError] = useState<ApiError | null>(null)
   const [retry, setRetry] = useState(0)
 
+  const [viewMode, setViewMode] = useState<"all" | "recommended">("all")
+  const [recommendedEvents, setRecommendedEvents] = useState<FeedItem[]>([])
+  const [recLoading, setRecLoading] = useState(false)
+  const [recError, setRecError] = useState<ApiError | null>(null)
+
   useEffect(() => {
     api.categories().then((r) => setCategories(r.categories)).catch(() => undefined)
   }, [])
+
+  useEffect(() => {
+    if (viewMode === "recommended") {
+      setRecLoading(true)
+      setRecError(null)
+      api
+        .feed({ limit: 20, fallback: false })
+        .then((rows) => setRecommendedEvents(rows))
+        .catch((e) => setRecError(e))
+        .finally(() => setRecLoading(false))
+    }
+  }, [viewMode])
 
   useEffect(() => {
     const t = window.setTimeout(() => setDebounced(query.trim()), 300)
@@ -45,6 +62,7 @@ export default function EventsPage() {
 
   // Reset to page 1 whenever a filter changes.
   useEffect(() => {
+    if (viewMode !== "all") return
     let cancelled = false
     setLoading(true)
     setError(null)
@@ -67,7 +85,7 @@ export default function EventsPage() {
     return () => {
       cancelled = true
     }
-  }, [debounced, category, upcomingOnly, retry])
+  }, [debounced, category, upcomingOnly, retry, viewMode])
 
   const loadMore = async () => {
     setLoadingMore(true)
@@ -104,72 +122,133 @@ export default function EventsPage() {
         </LinkButton>
       </div>
 
-      <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center">
-        <SearchBar value={query} onChange={setQuery} placeholder="Search by title, description or tag…" />
-        <SelectField
-          aria-label="Category"
-          value={category}
-          onChange={setCategory}
-          className="w-full sm:w-48"
-          options={[{ value: "all", label: "All categories" }, ...categories.map((c) => ({ value: c, label: c }))]}
-        />
-        <label className="flex shrink-0 cursor-pointer items-center gap-2 text-sm">
-          <input
-            type="checkbox"
-            checked={upcomingOnly}
-            onChange={(e) => setUpcomingOnly(e.target.checked)}
-            className="h-4 w-4 rounded border-input accent-[var(--primary)]"
-          />
-          Upcoming only
-        </label>
+      {/* Switcher: All Campus Events vs Recommended for You */}
+      <div className="mb-6 flex items-center gap-2 border-b pb-3">
+        <button
+          type="button"
+          onClick={() => setViewMode("all")}
+          className={`flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-all ${
+            viewMode === "all"
+              ? "bg-primary text-primary-foreground shadow-sm"
+              : "text-muted-foreground hover:bg-muted hover:text-foreground"
+          }`}
+        >
+          <Compass className="h-4 w-4" /> All Campus Events
+        </button>
+        <button
+          type="button"
+          onClick={() => setViewMode("recommended")}
+          className={`flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-all ${
+            viewMode === "recommended"
+              ? "bg-primary text-primary-foreground shadow-sm"
+              : "text-muted-foreground hover:bg-muted hover:text-foreground"
+          }`}
+        >
+          <Sparkles className="h-4 w-4" /> Recommended for You
+        </button>
       </div>
 
-      {loading ? (
-        <CardGridSkeleton />
-      ) : error && events.length === 0 ? (
-        <ErrorState error={error} onRetry={() => setRetry((n) => n + 1)} title="Couldn't load events" />
-      ) : events.length === 0 ? (
-        <EmptyState
-          icon={CalendarSearch}
-          title={filtered ? "No events match your filters" : "No events yet"}
-          description={
-            filtered
-              ? "Try a different search term or category."
-              : "Approved events will appear here. Be the first to host one."
-          }
-          action={
-            filtered ? (
-              <Button
-                variant="outline"
-                onClick={() => {
-                  setQuery("")
-                  setCategory("all")
-                }}
-              >
-                Clear filters
-              </Button>
-            ) : (
-              <LinkButton href="/events/new">
-                Host an event
-              </LinkButton>
-            )
-          }
-        />
-      ) : (
-        <>
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {events.map((event) => (
-              <EventCard key={event.event_id} event={event} />
-            ))}
+      {viewMode === "recommended" ? (
+        /* Recommended Events Section */
+        <div>
+          <div className="mb-6 rounded-xl border bg-primary/5 p-4 text-sm text-primary">
+            ✨ Events recommended based on what your campus connections have liked, registered for, or shared.
           </div>
-          {hasMore ? (
-            <div className="mt-8 flex justify-center">
-              <Button variant="outline" size="lg" className="h-10 px-5 text-sm" disabled={loadingMore} onClick={() => void loadMore()}>
-                {loadingMore ? <Spinner /> : null} Load more
-              </Button>
+
+          {recLoading ? (
+            <CardGridSkeleton count={3} />
+          ) : recError ? (
+            <ErrorState error={recError} onRetry={() => setViewMode("recommended")} title="Couldn't load recommendations" />
+          ) : recommendedEvents.length === 0 ? (
+            <EmptyState
+              icon={Sparkles}
+              title="No recommendations yet"
+              description="Connect with more classmates, and when they like or register for events, personalized recommendations will appear here."
+              action={
+                <LinkButton href="/people" variant="outline">
+                  Find classmates
+                </LinkButton>
+              }
+            />
+          ) : (
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {recommendedEvents.map((event) => (
+                <EventCard key={event.event_id} event={event} reason={event.social_context?.reason} />
+              ))}
             </div>
-          ) : null}
-        </>
+          )}
+        </div>
+      ) : (
+        /* General Events Section */
+        <div>
+          <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center">
+            <SearchBar value={query} onChange={setQuery} placeholder="Search by title, description or tag…" />
+            <SelectField
+              aria-label="Category"
+              value={category}
+              onChange={setCategory}
+              className="w-full sm:w-48"
+              options={[{ value: "all", label: "All categories" }, ...categories.map((c) => ({ value: c, label: c }))]}
+            />
+            <label className="flex shrink-0 cursor-pointer items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={upcomingOnly}
+                onChange={(e) => setUpcomingOnly(e.target.checked)}
+                className="h-4 w-4 rounded border-input accent-[var(--primary)]"
+              />
+              Upcoming only
+            </label>
+          </div>
+
+          {loading ? (
+            <CardGridSkeleton />
+          ) : error && events.length === 0 ? (
+            <ErrorState error={error} onRetry={() => setRetry((n) => n + 1)} title="Couldn't load events" />
+          ) : events.length === 0 ? (
+            <EmptyState
+              icon={CalendarSearch}
+              title={filtered ? "No events match your filters" : "No events yet"}
+              description={
+                filtered
+                  ? "Try a different search term or category."
+                  : "Approved events will appear here. Be the first to host one."
+              }
+              action={
+                filtered ? (
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      setQuery("")
+                      setCategory("all")
+                    }}
+                  >
+                    Clear filters
+                  </Button>
+                ) : (
+                  <LinkButton href="/events/new">
+                    Host an event
+                  </LinkButton>
+                )
+              }
+            />
+          ) : (
+            <>
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {events.map((event) => (
+                  <EventCard key={event.event_id} event={event} />
+                ))}
+              </div>
+              {hasMore ? (
+                <div className="mt-8 flex justify-center">
+                  <Button variant="outline" size="lg" className="h-10 px-5 text-sm" disabled={loadingMore} onClick={() => void loadMore()}>
+                    {loadingMore ? <Spinner /> : null} Load more
+                  </Button>
+                </div>
+              ) : null}
+            </>
+          )}
+        </div>
       )}
     </div>
   )

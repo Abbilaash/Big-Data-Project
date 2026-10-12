@@ -1,8 +1,37 @@
-import uuid
+import hashlib
+import secrets
 import jwt
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any
 from app.config import get_settings
+
+
+def hash_password(password: str) -> str:
+    """Hash a password using PBKDF2-HMAC-SHA256 with a unique random salt."""
+    salt = secrets.token_hex(16)
+    pw_hash = hashlib.pbkdf2_hmac(
+        "sha256",
+        password.encode("utf-8"),
+        salt.encode("utf-8"),
+        100000,
+    ).hex()
+    return f"{salt}${pw_hash}"
+
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    """Verify a plain password against the stored salt$hash."""
+    try:
+        salt, pw_hash = hashed_password.split("$", 1)
+        check_hash = hashlib.pbkdf2_hmac(
+            "sha256",
+            plain_password.encode("utf-8"),
+            salt.encode("utf-8"),
+            100000,
+        ).hex()
+        return secrets.compare_digest(pw_hash, check_hash)
+    except Exception:
+        return False
+
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
     settings = get_settings()
@@ -26,6 +55,7 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
     )
     return encoded_jwt
 
+
 def decode_access_token(token: str) -> Optional[Dict[str, Any]]:
     settings = get_settings()
     try:
@@ -38,29 +68,3 @@ def decode_access_token(token: str) -> Optional[Dict[str, Any]]:
     except jwt.PyJWTError:
         return None
 
-
-OAUTH_STATE_PURPOSE = "oauth_state"
-OAUTH_STATE_TTL_SECONDS = 600
-
-
-def create_oauth_state() -> str:
-    """Short-lived signed value binding the callback to a login we started."""
-    settings = get_settings()
-    now = datetime.now(timezone.utc)
-    return jwt.encode(
-        {
-            "purpose": OAUTH_STATE_PURPOSE,
-            "nonce": uuid.uuid4().hex,
-            "iat": now,
-            "exp": now + timedelta(seconds=OAUTH_STATE_TTL_SECONDS),
-        },
-        settings.JWT_SECRET_KEY,
-        algorithm=settings.JWT_ALGORITHM,
-    )
-
-
-def verify_oauth_state(state: Optional[str]) -> bool:
-    if not state:
-        return False
-    payload = decode_access_token(state)
-    return bool(payload) and payload.get("purpose") == OAUTH_STATE_PURPOSE
