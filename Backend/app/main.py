@@ -13,6 +13,7 @@ from app.database.init_db import initialize_databases
 
 from app.utils.errors import NotFoundError, ConflictError
 from app.routes import auth, users, events, social, feed, admin, comments
+from app.routes.xml_routes import router as xml_router
 
 # Configure logging
 logging.basicConfig(
@@ -122,3 +123,6 @@ app.include_router(social.router)
 app.include_router(feed.router)
 app.include_router(admin.router)
 app.include_router(comments.router)
+
+# XML Integration routes (Neo4j + MongoDB unified XML output)
+app.include_router(xml_router)
