@@ -1,10 +1,12 @@
 """Populate a running CampusConnect backend with demo data through its public API.
 
-Requires the backend to be running with ENABLE_DEV_LOGIN=true and ADMIN_EMAIL
-matching --admin-email (default admin@campus.local). Everything goes through the
-same HTTP endpoints the frontend uses, so it works against real MongoDB/Neo4j.
+Accounts are created with POST /api/auth/register (or signed in with
+POST /api/auth/login if they already exist), so every demo user can later sign in
+with the password below. ADMIN_EMAIL on the server must equal --admin-email for
+that account to receive the ADMIN role. Everything goes through the same HTTP
+endpoints the frontend uses, so it works against real MongoDB/Neo4j.
 
-    python scripts/seed_demo.py --base-url http://localhost:8000
+    python scripts/seed_demo.py --base-url http://localhost:8000 --admin-email admin@campus.edu
 
 Re-running is safe for users (dev login is idempotent) but will create duplicate
 events, so run it once per database.
@@ -15,12 +17,14 @@ from datetime import date, timedelta
 
 import httpx
 
+DEMO_PASSWORD = "DemoPass123!"  # demo accounts only
+
 PEOPLE = [
-    ("Priya Raman", "priya@campus.local", 3, "CSE"),
-    ("Arun Nair", "arun@campus.local", 3, "CSE"),
-    ("Meera Iyer", "meera@campus.local", 2, "IT"),
-    ("Karthik S", "karthik@campus.local", 4, "ECE"),
-    ("Divya Menon", "divya@campus.local", 1, "AI&DS"),
+    ("Priya Raman", "priya@campus.edu", 3, "CSE"),
+    ("Arun Nair", "arun@campus.edu", 3, "CSE"),
+    ("Meera Iyer", "meera@campus.edu", 2, "IT"),
+    ("Karthik S", "karthik@campus.edu", 4, "ECE"),
+    ("Divya Menon", "divya@campus.edu", 1, "AI&DS"),
 ]
 
 EVENTS = [
@@ -43,28 +47,25 @@ EVENTS = [
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--base-url", default="http://localhost:8000")
-    ap.add_argument("--admin-email", default="admin@campus.local")
+    ap.add_argument("--admin-email", default="admin@campus.edu")
     args = ap.parse_args()
 
     http = httpx.Client(base_url=args.base_url.rstrip("/"), timeout=15.0)
 
     def login(email: str, name: str, year: int = 4, department: str = "IT") -> dict:
-        r = http.post("/api/auth/dev-login", json={"email": email, "name": name})
-        if r.status_code == 404:
-            sys.exit("Dev login is disabled. Start the backend with ENABLE_DEV_LOGIN=true (development only).")
+        """Register the account, or sign in if it already exists."""
+        r = http.post("/api/auth/register", json={
+            "name": name, "email": email, "password": DEMO_PASSWORD,
+            "year": year, "department": department,
+        })
+        if r.status_code == 400:  # already registered: sign in instead
+            r = http.post("/api/auth/login", json={"email": email, "password": DEMO_PASSWORD})
+            if r.status_code == 401:
+                sys.exit(f"{email} exists with a different password; cannot seed as that user.")
         r.raise_for_status()
         data = r.json()["data"]
-        token = data["access_token"]
-        if not data["profile_completed"]:
-            r = http.post(
-                "/api/auth/complete-profile",
-                headers={"Authorization": f"Bearer {token}"},
-                json={"name": name, "year": year, "department": department},
-            )
-            r.raise_for_status()
-            data = r.json()["data"]
-            token = data["access_token"]
-        return {"user_id": data["user_id"], "role": data["role"], "headers": {"Authorization": f"Bearer {token}"}}
+        return {"user_id": data["user_id"], "role": data["role"],
+                "headers": {"Authorization": f"Bearer {data['access_token']}"}}
 
     def call(method: str, path: str, who: dict, **kw):
         r = http.request(method, path, headers=who["headers"], **kw)
@@ -109,7 +110,7 @@ def main() -> int:
             call("POST", f"/api/events/{approved[event_idx]}/{action}", people[person_idx])
     call("POST", f"/api/events/{approved[0]}/comments", people[1], json={"content": "Count me in!"})
     print("Seeded follows, registrations, likes, shares and a comment.")
-    print(f"Sign in as {args.admin_email} (admin) or any of: " + ", ".join(e for _, e, _, _ in PEOPLE))
+    print(f"Sign in with password {DEMO_PASSWORD!r} as {args.admin_email} (admin) or any of: " + ", ".join(e for _, e, _, _ in PEOPLE))
     return 0
 
 

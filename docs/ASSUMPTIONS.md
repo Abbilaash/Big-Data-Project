@@ -59,7 +59,10 @@ Last updated: 2026-10-11 (after implementation and verification).
 - **Impact:** The `/teammates` route and `lib/data.ts` mock module are removed or
   replaced (logged in IMPLEMENTATION_LOG.md).
 
-## A-04 Authentication: Google OAuth only, plus a gated dev login
+## A-04 Authentication: Google OAuth only, plus a gated dev login (SUPERSEDED)
+
+> **Superseded on 2026-10-12.** The team replaced Google OAuth with email and
+> password (commit `aeb11c6`); see A-20. Kept for history.
 
 - **Known:** Login is Google OAuth 2.0 only. No Google credentials exist in the
   repository or environment, so the real flow cannot be exercised here.
@@ -73,7 +76,10 @@ Last updated: 2026-10-11 (after implementation and verification).
   hard-blocked in production, documented in SETUP.md, logged at startup.
 - **Unverified:** The live Google flow remains unverified against Google itself.
 
-## A-05 Token transport after OAuth callback
+## A-05 Token transport after OAuth callback (SUPERSEDED)
+
+> **Superseded on 2026-10-12.** The team replaced Google OAuth with email and
+> password (commit `aeb11c6`); see A-20. Kept for history.
 
 - **Known:** The callback redirects with `?token=<JWT>` in the query string,
   which leaks into history, logs and Referer headers (documented as a security
@@ -86,7 +92,10 @@ Last updated: 2026-10-11 (after implementation and verification).
   same-site deployment or cross-site cookie config; deferred.
 - **Residual risk:** Token is held in `localStorage` and is readable by XSS.
 
-## A-06 OAuth `state` / CSRF protection
+## A-06 OAuth `state` / CSRF protection (SUPERSEDED)
+
+> **Superseded on 2026-10-12.** The team replaced Google OAuth with email and
+> password (commit `aeb11c6`); see A-20. Kept for history.
 
 - **Decision (Decided):** The backend issues a signed, short-lived `state`
   (JWT) at `/google/login` and verifies it in the callback. A missing or invalid
@@ -233,6 +242,33 @@ them would be new product scope rather than completing the existing one.
   `app/globals.css` tokens would change.
 - **Supersedes:** the indigo dark palette from A-18. Light theme remains
   available via the toggle and was re-tinted to the same monochrome language.
+
+## A-20 Email and password sign-in (team decision, reviewed here)
+
+- **Change:** Abbilaash's commit `aeb11c6` replaced Google OAuth with
+  `POST /api/auth/register` and `/login`. My dev-login and OAuth code were
+  removed by that change, and I updated tests, seed script, browser scenario and
+  docs to match.
+- **Reviewed (verified from code):** passwords are hashed with salted
+  PBKDF2-HMAC-SHA256 (100,000 iterations), compared in constant time, and a
+  wrong email and a wrong password return the same message (no account
+  enumeration).
+- **Risks recorded, not changed (the auth code is the team's):**
+  1. **No email verification.** Whoever registers the `ADMIN_EMAIL` address
+     first becomes ADMIN. Under Google sign-in Google proved ownership of the
+     address; that guarantee is gone. On a real deployment, register the admin
+     account first and consider email verification.
+  2. No login rate limiting or lockout, so passwords can be guessed online.
+  3. 100,000 PBKDF2 iterations is below current OWASP guidance for SHA-256
+     (600,000).
+- **Test data convention:** tests and demo data use `@campus.edu` addresses
+  because email validation rejects reserved domains (`.test`, `.local`).
+- **State of the real database (2026-10-16):** it contains no admin account, so
+  nobody can reach the Admin console until the `ADMIN_EMAIL` address is
+  registered. Earlier hand-seeded users and admin were removed by someone on the
+  team.
+- **Needs confirmation:** whether email verification and rate limiting are
+  wanted before real use.
 
 ## Open questions
 

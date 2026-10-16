@@ -15,7 +15,7 @@ Browser ── Next.js 16 app (frontend/, port 3000)
               │                    │
         MongoDB (content)     Neo4j (graph)
               ▲
-   Google OAuth 2.0 (sign-in only)
+   Email + password sign-in (JWT)
 ```
 
 | Concern | Store | Why |
@@ -43,7 +43,7 @@ truth for names and profile data** and is used to hydrate every response.
 | `services/` | Business rules and all database access |
 | `schemas/` | Request/response models and input validation |
 | `database/` | Motor client, Neo4j driver, `execute_query`, index/constraint setup |
-| `utils/` | JWT + OAuth-state signing, ID helpers, domain errors |
+| `utils/` | JWT signing, PBKDF2 password hashing, ID helpers, domain errors |
 | `dependencies.py` | Auth chain: token → user → active (profile complete) → admin; optional user for public endpoints |
 
 ### Error model
@@ -54,15 +54,14 @@ truth for names and profile data** and is used to hydrate every response.
 - Unhandled exceptions → generic 500; details only in server logs.
 
 ### Authentication
-Google OAuth authorisation-code flow; the app issues its own HS256 JWT.
-1. `/api/auth/google/login` redirects with a **signed, 10-minute `state`**.
-2. `/api/auth/google/callback` verifies `state`, exchanges the code, upserts
-   the user (role = `ADMIN` iff email equals `ADMIN_EMAIL`), and redirects to
-   `FRONTEND_URL/auth/callback#token=…` — the token is in the URL **fragment**.
-3. The user row is re-read from MongoDB on every request, so role/profile
+Email and password; the app issues its own HS256 JWT. (This replaced the
+earlier Google OAuth flow in the team's commit `aeb11c6`, 2026-10-12.)
+1. `POST /api/auth/register` creates the account (role = `ADMIN` iff the email
+   equals `ADMIN_EMAIL`, otherwise `USER`) and returns a token.
+2. `POST /api/auth/login` verifies the credentials and returns a token.
+3. The browser keeps the token and sends it as a Bearer header.
+4. The user row is re-read from MongoDB on every request, so role/profile
    changes apply immediately regardless of stale token claims.
-4. `POST /api/auth/dev-login` exists only when `ENABLE_DEV_LOGIN=true` **and**
-   `ENVIRONMENT != production` (404 otherwise).
 
 ### Event lifecycle (state machine)
 ```
@@ -110,8 +109,7 @@ permanently redirect to `/people`.
 
 | Control | Where |
 |---|---|
-| Signed OAuth `state` (CSRF) | `utils/security.py`, `routes/auth.py` |
-| Token never in a query string | Fragment redirect |
+| Passwords hashed with salted PBKDF2-HMAC-SHA256 (100,000 iterations), constant-time compare, one generic error for unknown email or wrong password | `utils/security.py`, `services/auth_service.py` |
 | http(s)-only URLs for poster/registration/avatar | `schemas/validators.py` |
 | Server-side validation of all inputs (dates, times, lengths, categories) | `schemas/` |
 | Escaped regex for all text search | `re.escape` in services |
@@ -121,7 +119,7 @@ permanently redirect to `/people`.
 | Production refuses placeholder secrets | `config.validate_for_runtime` |
 | No stack/exception text to clients | `main.py` |
 
-Known gaps: no rate limiting; JWT in `localStorage` is readable by XSS (React
+Known gaps: **no email verification, so whoever registers the `ADMIN_EMAIL` address first becomes ADMIN** (register the real admin account immediately after deploying, and consider email verification); no login rate limiting or lockout; PBKDF2 at 100,000 iterations is below current OWASP guidance for SHA-256 (600,000); no rate limiting elsewhere; JWT in `localStorage` is readable by XSS (React
 escapes output and no `dangerouslySetInnerHTML` is used); no token revocation
 other than expiry (default 24 h).
 

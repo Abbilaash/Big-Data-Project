@@ -215,3 +215,98 @@ neither `Backend/.venv` nor `frontend/node_modules` exists.
   clean; `next build` success; screenshots reviewed for landing (dark and
   light), dashboard; browser E2E **29/29** again. `e2e/run.mjs` gained
   `API_PORT_REWRITE` so it can be pointed at the mock backend safely.
+
+---
+
+## 2026-10-12 — Real-database check (read-only)
+
+- Backend and frontend had stopped (machine slept, network dropped); restarted
+  both. `/health`: mongodb + neo4j `connected`.
+- MongoDB holds pre-existing hand-made records (5 users incl. `USR_ADMIN1`,
+  3 events: 2 approved, 1 pending; 2 comments) that were inserted directly, not
+  via the app. Neo4j was **empty** (no nodes or relationships): those records
+  never went through the graph-writing paths. Not a defect; graph nodes are
+  created lazily on first follow/like/register/approve.
+- All 24 app Cypher statements validated on the real Aura instance (reads
+  executed, writes `EXPLAIN` only). No data was written or deleted.
+- Existing admin account email matches `ADMIN_EMAIL`, so it keeps ADMIN on login.
+- Aura note: the database name equals the instance ID (`590f6d74`), as does the
+  username; the default session reaches it without extra configuration.
+
+---
+
+## 2026-10-16 — Phase 6: Aligning with the team's email/password auth; test-safety incident
+
+### What changed on the team's side (observed in git)
+- `aeb11c6` (Abbilaash, 2026-10-12): Google OAuth replaced by email/password
+  (`/api/auth/register`, `/login`), recommended events separated from general
+  events on the dashboard, frontend API default changed to `127.0.0.1`.
+- `5c302cc` (Nivashini, 2026-10-14): `Backend/scripts/populate_demo_integration.py`
+  and graph demo data (players, countries, a tournament) added to Neo4j.
+- The earlier hand-seeded Mongo users and admin are no longer present.
+
+### Fixed by me
+- **Backend tests:** the team's register test failed because test addresses
+  used reserved domains (`.test`) that email validation rejects; changed test
+  data to `@campus.edu`. One assertion expected "already registered" but the
+  service says "already exists"; assertion corrected. Removed dead
+  `ENABLE_DEV_LOGIN` settings from `tests/conftest.py` and `tests/demo_server.py`.
+  Result: **56 passed**.
+- **`Backend/scripts/seed_demo.py`:** now registers accounts (or signs in if
+  they exist) instead of the removed dev login; demo password `DemoPass123!`.
+  Verified against the in-memory backend.
+- **`e2e/run.mjs`:** rewritten for register/sign-in; OAuth-fragment step removed;
+  dashboard and outage assertions updated to the team's new wording. Result:
+  **28/28** against the in-memory backend.
+- **Docs:** `API.md`, `ARCHITECTURE.md`, `SETUP.md`, `TESTING.md`,
+  `ASSUMPTIONS.md` (A-04…A-06 marked superseded, A-20 added), `e2e/README.md`.
+
+### Incident (my error): browser test hit the real backend
+- The redirect that sends browser API calls to the in-memory backend matched
+  `localhost` only; the frontend now defaults to `127.0.0.1`, so one E2E run
+  executed against the **real** backend and databases.
+- **Left behind (found by read-only audit):** MongoDB — users `USR_E47B7093`
+  (admin@campus.edu), `USR_CC534494` (asha@campus.edu), `USR_A821ECF9`
+  (bala@campus.edu), event `EV_8BE354FE` ("AI Hackathon", pending). Neo4j —
+  `FOLLOWS` Asha→Bala and Bala→Asha; Bala `REGISTERED` and `VIEWED`
+  `EV_ROBOT2026` (an existing event; its registration count rose by one).
+- **Not deleted.** Removing records from a shared database needs the owner's
+  go-ahead; see TESTING.md for the summary and cleanup status.
+- **Prevention:** redirect matches both hostnames; `e2e/run.mjs` refuses to run
+  unless `API_PORT_REWRITE` or `E2E_BACKEND_IS_DISPOSABLE=1` is set; the fixed
+  run was verified by the real backend's write-request count (12 before, 12
+  after).
+
+### Real Neo4j verification (side result of the incident)
+- Through the app, follow, register and view relationships were written to the
+  real Neo4j and read back by the audit, so the backend-to-Neo4j write path works
+  with real data. (Not a planned test; recorded because it is the first
+  observation of real graph writes.)
+
+### Open
+- No admin account exists in the real database (see ASSUMPTIONS A-20).
+- Email verification, login rate limiting and stronger PBKDF2 settings are
+  recommended, not implemented.
+
+---
+
+## 2026-10-16 — Neo4j cleanup (destructive, requested by the project owner)
+
+- **Request:** remove every Neo4j node and relationship that is not part of the
+  app's own model (labels `User`/`Event`; relationships FOLLOWS, HOSTED, LIKED,
+  REGISTERED, VIEWED, SHARED).
+- **Removed:** 17 nodes (9 unlabelled, 3 `player`, and one each of `student`,
+  `Student`, `class`, `Country`, `Tornament`) and 11 relationships
+  (`TOPSCORRER_OF`, `is_friend_of`, `WINNER_OF` ×2 each, and `is_student_of`,
+  `CAPTAIN_OF`, `WINNERS_OF`, `TOP_SCORER_OF`, `HIGHEST_WICKET_TAKER_OF` ×1 each).
+  This was the cricket/student demo data added around commit `5c302cc`.
+- **Kept, verified unchanged:** 6 `User`, 1 `Event`, FOLLOWS ×4, REGISTERED ×1,
+  VIEWED ×1. No relationship between system nodes was removed.
+- **Backup:** the removed nodes and relationships were saved as JSON in the
+  session scratch folder (`neo4j_non_system_backup.json`), outside the repo. No
+  restore script exists.
+- **Process note:** the first attempt was blocked by the permission classifier
+  and was not retried by other means; it was re-run on the owner's explicit
+  instruction.
+- **Heads-up:** `Backend/scripts/populate_demo_integration.py` (the team's
+  script) would recreate that demo data if run again.

@@ -39,7 +39,7 @@ def test_production_accepts_real_secrets():
 async def test_register_creates_user_and_returns_token(client):
     r = await client.post("/api/auth/register", json={
         "name": "Ada Lovelace",
-        "email": "ada@campus.test",
+        "email": "ada@campus.edu",
         "password": "secretpassword123",
         "year": 2,
         "department": "CSE"
@@ -60,7 +60,7 @@ async def test_register_creates_user_and_returns_token(client):
 async def test_register_duplicate_email_fails(client):
     payload = {
         "name": "First User",
-        "email": "unique@campus.test",
+        "email": "unique@campus.edu",
         "password": "secretpassword123",
         "year": 1,
         "department": "ECE"
@@ -70,14 +70,14 @@ async def test_register_duplicate_email_fails(client):
 
     r2 = await client.post("/api/auth/register", json=payload)
     assert r2.status_code == 400
-    assert "already registered" in r2.json()["detail"].lower()
+    assert "already exists" in r2.json()["detail"].lower()
 
 
 async def test_login_success_and_wrong_password(client):
     # Register user first
     await client.post("/api/auth/register", json={
         "name": "Login Tester",
-        "email": "tester@campus.test",
+        "email": "tester@campus.edu",
         "password": "correct_password_here",
         "year": 3,
         "department": "MECH"
@@ -85,14 +85,14 @@ async def test_login_success_and_wrong_password(client):
 
     # Wrong password
     bad_login = await client.post("/api/auth/login", json={
-        "email": "tester@campus.test",
+        "email": "tester@campus.edu",
         "password": "wrong_password"
     })
     assert bad_login.status_code == 401
 
     # Correct password
     good_login = await client.post("/api/auth/login", json={
-        "email": "tester@campus.test",
+        "email": "tester@campus.edu",
         "password": "correct_password_here"
     })
     assert good_login.status_code == 200
@@ -102,7 +102,7 @@ async def test_login_success_and_wrong_password(client):
 async def test_session_endpoint_works(client):
     r = await client.post("/api/auth/register", json={
         "name": "Sam Doe",
-        "email": "sam@campus.test",
+        "email": "sam@campus.edu",
         "password": "passwordsam123",
         "year": 1,
         "department": "IT"
@@ -118,7 +118,7 @@ async def test_session_endpoint_works(client):
 async def test_register_admin_email_gets_admin_role(client):
     r = await client.post("/api/auth/register", json={
         "name": "Admin User",
-        "email": "ADMIN@campus.test",
+        "email": "ADMIN@campus.edu",
         "password": "adminpassword123",
         "year": 4,
         "department": "CSE"

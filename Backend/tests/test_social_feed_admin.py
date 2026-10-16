@@ -95,7 +95,7 @@ async def test_suggestions_rank_friends_of_friends_then_department(client, make)
 
 async def test_directory_search_filters_and_hides_email(client, make):
     me = await make.user("Me", department="CSE")
-    await make.user("Priya Raman", department="IT", year=2, email="secretmail@campus.test")
+    await make.user("Priya Raman", department="IT", year=2, email="secretmail@campus.edu")
     await make.user("Arun Nair", department="CSE", year=3)
     await make.user("Pending Person", completed=False)
 

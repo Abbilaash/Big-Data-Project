@@ -9,7 +9,6 @@
 | pnpm | 10+ (repo pins `pnpm@12.3.4`) | `npx pnpm@10 …` works without installing |
 | MongoDB | 6+ (7 recommended) | local, Docker or Atlas |
 | Neo4j | **5.x** | pattern comprehensions and `IF NOT EXISTS` constraints need 4.4+/5 |
-| Google OAuth client | — | only for real Google sign-in |
 
 ## 1. Databases
 
@@ -37,16 +36,13 @@ python run.py                       # http://localhost:8000  (Swagger at /docs)
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `ENVIRONMENT` | `development` | `production` enforces real secrets and disables dev login |
+| `ENVIRONMENT` | `development` | `production` refuses to start with placeholder secrets and drops the extra development CORS origins |
 | `MONGO_URI` / `MONGO_DB_NAME` | `mongodb://localhost:27017` / `campusconnect` | MongoDB |
 | `NEO4J_URI` / `NEO4J_USERNAME` / `NEO4J_PASSWORD` | `bolt://localhost:7687` / `neo4j` / `change_me` | Neo4j |
-| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | placeholders | Google OAuth |
-| `GOOGLE_REDIRECT_URI` | `http://localhost:8000/api/auth/google/callback` | must match the Google console |
 | `JWT_SECRET_KEY` | placeholder | **Set to ≥ 32 random chars**: `python -c "import secrets; print(secrets.token_urlsafe(48))"` |
 | `JWT_ALGORITHM` / `JWT_EXPIRE_MINUTES` | `HS256` / `1440` | token settings |
-| `FRONTEND_URL` | `http://localhost:3000` | CORS origin(s), comma-separated; first is the login redirect target |
-| `ADMIN_EMAIL` | `admin@example.com` | the account with this email becomes `ADMIN` at sign-in |
-| `ENABLE_DEV_LOGIN` | `false` | enables `POST /api/auth/dev-login` (never in production) |
+| `FRONTEND_URL` | `http://localhost:3000` | CORS origin(s), comma-separated. Outside production, `localhost`/`127.0.0.1` on ports 3000 and 5173 are also allowed |
+| `ADMIN_EMAIL` | `admin@example.com` | registering (or signing in) with this email gives the `ADMIN` role |
 
 In `production`, the API **refuses to start** if `JWT_SECRET_KEY` is the
 placeholder or shorter than 32 characters, or if `NEO4J_PASSWORD` is the
@@ -54,20 +50,27 @@ placeholder.
 
 ### Signing in
 
-*With Google:* create an OAuth 2.0 **Web application** client in Google Cloud
-Console, add the redirect URI above, and put the client ID/secret in `.env`.
+Accounts use **email and password**. Open the app, choose **Register Now**, and
+create an account (password at least 6 characters). Email addresses are
+validated, so reserved domains such as `.test` and `.local` are rejected; use a
+real-looking domain such as `college.edu`.
 
-*Without Google (development only):* set `ENABLE_DEV_LOGIN=true`. The login
-page then shows a "Developer sign-in" form. Use the `ADMIN_EMAIL` value to
-get the admin console. **Do not enable this on a deployment real users reach.**
+**Getting an admin account:** register using exactly the address set in
+`ADMIN_EMAIL`. That account gets the `ADMIN` role and the Admin console. There
+is no email verification, so on a real deployment set `ADMIN_EMAIL` to an
+address you control and register it **first**, before anyone else can claim it.
+If you change `ADMIN_EMAIL`, restart the backend; the role is applied when that
+address registers or signs in.
 
 ### Demo data (optional)
-With dev login enabled and the API running:
+With the API running:
 ```bash
-python scripts/seed_demo.py --base-url http://localhost:8000
+python scripts/seed_demo.py --base-url http://localhost:8000 --admin-email <ADMIN_EMAIL>
 ```
-Creates 5 students, 6 events (5 approved, 1 pending), a follow graph and
-interactions through the public API.
+Registers 5 students and the admin (all with the demo password
+`DemoPass123!`; existing accounts are signed in instead), then creates 6 events
+(5 approved, 1 pending), a follow graph and interactions through the public
+API. **This writes real records** to whichever databases the API is using.
 
 ## 3. Frontend
 
@@ -90,5 +93,5 @@ See [TESTING.md](TESTING.md).
 |---|---|
 | Login page says server unreachable | API not running, wrong `NEXT_PUBLIC_API_URL`, or CORS: `FRONTEND_URL` must equal the exact browser origin |
 | `/health` → `neo4j: disconnected` | Neo4j down or wrong credentials; reads degrade, writes return 503 |
-| Google sign-in lands on `/login` with an error | OAuth `state` expired (10 min) or redirect URI mismatch |
+| Register says the email already exists | That address is already registered; sign in instead |
 | API exits at start-up in production | placeholder secret detected (see above) |

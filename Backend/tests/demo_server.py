@@ -20,8 +20,7 @@ sys.path.insert(0, str(HERE.parent))
 sys.path.insert(0, str(HERE))
 
 os.environ.setdefault("ENVIRONMENT", "development")
-os.environ.setdefault("ENABLE_DEV_LOGIN", "true")
-os.environ.setdefault("ADMIN_EMAIL", "admin@campus.local")
+os.environ.setdefault("ADMIN_EMAIL", "admin@campus.edu")
 os.environ.setdefault("FRONTEND_URL", "http://localhost:3000")
 
 import uvicorn  # noqa: E402

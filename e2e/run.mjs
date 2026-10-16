@@ -1,13 +1,27 @@
 // End-to-end browser scenario for CampusConnect.
 //
 // Drives the real frontend against a real backend. It expects a FRESH backend
-// (it creates asha@/bala@/admin@campus.local and assumes ADMIN_EMAIL is
-// admin@campus.local with ENABLE_DEV_LOGIN=true). See e2e/README.md.
-import { chromium } from "playwright-core"
+// (it registers asha@/bala@/admin@campus.edu and assumes the server's
+// ADMIN_EMAIL is admin@campus.edu). See e2e/README.md.
 import fs from "node:fs"
 import path from "node:path"
 
 const BASE = process.env.BASE_URL ?? "http://localhost:3000"
+
+// SAFETY: this scenario registers users, creates events and follows people. It
+// must only ever run against a disposable backend (the in-memory harness), never
+// a real database. Redirect the app's API calls with API_PORT_REWRITE=8000:8001,
+// or set E2E_BACKEND_IS_DISPOSABLE=1 if the frontend already targets a throwaway
+// backend.
+if (!process.env.API_PORT_REWRITE && process.env.E2E_BACKEND_IS_DISPOSABLE !== "1") {
+  console.error(
+    "Refusing to run: no disposable backend declared.\n" +
+      "Start `PORT=8001 python Backend/tests/demo_server.py` and run with API_PORT_REWRITE=8000:8001.",
+  )
+  process.exit(2)
+}
+// Loaded after the guard so the refusal above always runs first.
+const { chromium } = await import("playwright-core")
 const SHOTS = path.join(import.meta.dirname, "shots")
 fs.mkdirSync(SHOTS, { recursive: true })
 
@@ -38,8 +52,9 @@ async function newUser(label, viewport = { width: 1280, height: 900 }) {
   // harness on :8001) without rebuilding the frontend. Format: "8000:8001".
   if (process.env.API_PORT_REWRITE) {
     const [from, to] = process.env.API_PORT_REWRITE.split(":")
-    await ctx.route(`http://localhost:${from}/**`, (r) =>
-      r.continue({ url: r.request().url().replace(`localhost:${from}`, `localhost:${to}`) }),
+    const pattern = new RegExp("^http://(localhost|127\\.0\\.0\\.1):" + from + "/")
+    await ctx.route(pattern, (r) =>
+      r.continue({ url: r.request().url().replace(`:${from}/`, `:${to}/`) }),
     )
   }
   const page = await ctx.newPage()
@@ -53,21 +68,27 @@ async function newUser(label, viewport = { width: 1280, height: 900 }) {
   return { ctx, page }
 }
 
-async function devLogin(page, email, name) {
+const PW = "E2ePass123!"
+
+async function register(page, name, email, year, dept) {
   await page.goto(BASE + "/login")
-  await page.getByLabel("Email").fill(email)
-  await page.getByLabel("Name").fill(name)
-  await page.getByRole("button", { name: /Sign in \(development\)/ }).click()
+  await page.getByRole("button", { name: "Register Now" }).first().click()
+  await page.locator("#reg-name").fill(name)
+  await page.locator("#reg-email").fill(email)
+  await page.locator("#reg-password").fill(PW)
+  await page.locator("#reg-year").click()
+  await page.getByRole("option", { name: year }).click()
+  await page.locator("#reg-dept").click()
+  await page.getByRole("option", { name: dept, exact: true }).click()
+  await page.getByRole("button", { name: "Register Now" }).last().click()
+  await page.waitForURL(BASE + "/")
 }
 
-async function completeProfile(page, year, dept) {
-  await page.waitForURL("**/complete-profile")
-  await page.locator("#year").click()
-  await page.getByRole("option", { name: year }).click()
-  await page.locator("#department").click()
-  await page.getByRole("option", { name: dept, exact: true }).click()
-  await page.getByRole("button", { name: "Continue" }).click()
-  await page.waitForURL(BASE + "/")
+async function signInPassword(page, email, password = PW) {
+  await page.goto(BASE + "/login")
+  await page.locator("#login-email").fill(email)
+  await page.locator("#login-password").fill(password)
+  await page.getByRole("button", { name: "Sign In" }).last().click()
 }
 
 const future = new Date(Date.now() + 10 * 86400000).toISOString().slice(0, 10)
@@ -78,16 +99,16 @@ await step("unauthenticated visit to / redirects to /login", async () => {
   await anon.page.goto(BASE + "/")
   await anon.page.waitForURL("**/login")
 })
-await step("login page shows Google button and dev sign-in", async () => {
-  await anon.page.getByRole("link", { name: /Continue with Google/ }).waitFor()
-  await anon.page.getByRole("button", { name: /Sign in \(development\)/ }).waitFor()
+await step("login page shows the sign-in form with a register option", async () => {
+  await anon.page.locator("#login-email").waitFor()
+  await anon.page.locator("#login-password").waitFor()
+  await anon.page.getByRole("button", { name: "Register Now" }).first().waitFor()
   await anon.page.screenshot({ path: path.join(SHOTS, "01-login.png") })
 })
-await step("OAuth error fragment is displayed and stripped from URL", async () => {
-  await anon.page.goto("about:blank")
-  await anon.page.goto(BASE + "/login#error=Sign-in+session+expired")
-  await anon.page.getByRole("alert").filter({ hasText: "Sign-in session expired" }).waitFor()
-  if (anon.page.url().includes("#")) throw new Error("fragment still in URL")
+await step("wrong credentials show an error and stay signed out", async () => {
+  await signInPassword(anon.page, "nobody@campus.edu", "wrong-password")
+  await anon.page.getByRole("alert").waitFor()
+  if (!anon.page.url().includes("/login")) throw new Error("left the login page")
 })
 await step("old /students route redirects to /people (then login)", async () => {
   await anon.page.goto(BASE + "/students")
@@ -96,19 +117,22 @@ await step("old /students route redirects to /people (then login)", async () => 
 
 // ------------------------------------------------------------------- host
 const asha = await newUser("asha")
-await step("Asha: dev login -> forced onboarding", async () => {
-  await devLogin(asha.page, "asha@campus.local", "Asha Raman")
-  await asha.page.waitForURL("**/complete-profile")
-})
-await step("Asha: onboarding validation blocks empty selection", async () => {
-  await asha.page.getByRole("button", { name: "Continue" }).click()
-  await asha.page.getByText("Please choose your year.").waitFor()
-})
-await step("Asha: completes profile and lands on dashboard", async () => {
-  await completeProfile(asha.page, "3rd year", "CSE")
+await step("Asha: registers and lands on the dashboard", async () => {
+  await register(asha.page, "Asha Raman", "asha@campus.edu", "3rd year", "CSE")
   await asha.page.getByRole("heading", { name: /Welcome back, Asha/ }).waitFor()
 })
+await step("Asha: duplicate registration is rejected", async () => {
+  const dup = await newUser("dup")
+  await dup.page.goto(BASE + "/login")
+  await dup.page.getByRole("button", { name: "Register Now" }).first().click()
+  await dup.page.locator("#reg-name").fill("Asha Again")
+  await dup.page.locator("#reg-email").fill("asha@campus.edu")
+  await dup.page.locator("#reg-password").fill(PW)
+  await dup.page.getByRole("button", { name: "Register Now" }).last().click()
+  await dup.page.getByRole("alert").filter({ hasText: /already exists/i }).waitFor()
+})
 await step("Asha: dashboard empty states render", async () => {
+  await asha.page.getByText("No personalized recommendations yet").waitFor()
   await asha.page.getByText("No upcoming events yet").waitFor()
   await asha.page.screenshot({ path: path.join(SHOTS, "02-dashboard-empty.png"), fullPage: true })
 })
@@ -145,8 +169,7 @@ await step("public events list does not show the pending event", async () => {
 // ------------------------------------------------------------------ admin
 const admin = await newUser("admin")
 await step("Admin: signs in with ADMIN_EMAIL and sees Admin nav", async () => {
-  await devLogin(admin.page, "admin@campus.local", "Admin User")
-  await completeProfile(admin.page, "4th year", "IT")
+  await register(admin.page, "Admin User", "admin@campus.edu", "4th year", "IT")
   await admin.page.getByRole("link", { name: "Admin" }).first().waitFor()
 })
 await step("Admin: pending event is in the queue and can be approved", async () => {
@@ -164,8 +187,7 @@ await step("Non-admin cannot see the admin console", async () => {
 // --------------------------------------------------------------- attendee
 const bala = await newUser("bala")
 await step("Bala: signs up and completes profile", async () => {
-  await devLogin(bala.page, "bala@campus.local", "Bala Kumar")
-  await completeProfile(bala.page, "2nd year", "ECE")
+  await register(bala.page, "Bala Kumar", "bala@campus.edu", "2nd year", "ECE")
 })
 await step("Bala: approved event shows in list with category filter + search", async () => {
   await bala.page.goto(BASE + "/events")
@@ -254,17 +276,14 @@ await step("Unknown event id shows a friendly not-found state", async () => {
 await step("Backend outage shows a recoverable error, not a blank page", async () => {
   await bala.page.route("**/api/feed**", (r) => r.abort())
   await bala.page.goto(BASE + "/")
-  await bala.page.getByText("Couldn't load your feed").waitFor()
+  await bala.page.getByText("Couldn't load recommendations").waitFor()
   await bala.page.unroute("**/api/feed**")
 })
 
 // ------------------------------------------------------------------ mobile
 const mobile = await newUser("mobile", { width: 390, height: 800 })
 await step("Mobile: dashboard has no horizontal overflow and menu opens", async () => {
-  await mobile.page.goto(BASE + "/login")
-  await mobile.page.getByLabel("Email").fill("bala@campus.local")
-  await mobile.page.getByLabel("Name").fill("Bala Kumar")
-  await mobile.page.getByRole("button", { name: /Sign in \(development\)/ }).click()
+  await signInPassword(mobile.page, "bala@campus.edu")
   await mobile.page.waitForURL(BASE + "/")
   await mobile.page.getByRole("heading", { name: /Welcome back/ }).waitFor()
   const overflow = await mobile.page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)

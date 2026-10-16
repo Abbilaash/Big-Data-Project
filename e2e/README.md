@@ -1,36 +1,36 @@
 # End-to-end scenario
 
-29 browser steps covering sign-in, onboarding, hosting, moderation, registering,
-liking, commenting, following, the social feed, admin analytics, session expiry,
-error states and a mobile viewport.
+28 browser steps covering sign-in and registration, hosting, moderation,
+registering, liking, commenting, following, the social feed, admin analytics,
+session expiry, error states and a mobile viewport.
+
+## ⚠ This test writes data
+
+It registers users, creates events and follows people. **Never run it against a
+real database.** The script refuses to start unless you declare a disposable
+backend (see below).
 
 ## Run
 
-Needs a **fresh** backend with `ENABLE_DEV_LOGIN=true` and
-`ADMIN_EMAIL=admin@campus.local`, and the frontend on `BASE_URL`.
-
-Without database servers, use the in-memory harness (mocks, see docs/TESTING.md):
+Needs a **fresh** in-memory backend started with `ADMIN_EMAIL=admin@campus.edu`
+(the harness sets this itself) and the built frontend on `BASE_URL`.
 
 ```bash
-# terminal 1
-cd Backend && python tests/demo_server.py
-# terminal 2
+# terminal 1 — in-memory MOCK backend on port 8001 (no databases involved)
+cd Backend && PORT=8001 python tests/demo_server.py
+# terminal 2 — the built frontend (it talks to :8000 by default)
 cd frontend && pnpm build && pnpm start
-# terminal 3
-cd e2e && npm install && npm test
+# terminal 3 — redirect the browser's API calls from :8000 to the mock on :8001
+cd e2e && npm install && API_PORT_REWRITE=8000:8001 npm test
 ```
 
-Environment: `BASE_URL` (default `http://localhost:3000`), `CHROME_PATH` (path to
-a Chrome/Chromium binary; otherwise Playwright's `chrome` channel is used).
-Screenshots are written to `e2e/shots/` (git-ignored).
+`API_PORT_REWRITE=from:to` matches both `localhost` and `127.0.0.1`. If your
+frontend is already built against a throwaway backend, set
+`E2E_BACKEND_IS_DISPOSABLE=1` instead.
 
-## Pointing the UI at a different backend
+Other settings: `BASE_URL` (default `http://localhost:3000`), `CHROME_PATH` (a
+Chrome/Chromium binary; otherwise Playwright's `chrome` channel is used).
+Screenshots go to `e2e/shots/` (git-ignored).
 
-If the built frontend targets a backend you must not write test data to (for
-example your real databases on `:8000`), run the mock harness on another port
-and rewrite the browser's API calls:
-
-```bash
-PORT=8001 python Backend/tests/demo_server.py
-API_PORT_REWRITE=8000:8001 npm test
-```
+After a run you can confirm nothing reached a real backend: its request log
+should show no new POST/DELETE/PATCH lines.

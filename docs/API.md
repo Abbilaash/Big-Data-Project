@@ -42,12 +42,14 @@ The endpoint table below was generated from the app's OpenAPI schema.
 ### Auth — `/api/auth`
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| GET | `/config` | — | `{dev_login_enabled}` for the login screen |
-| GET | `/google/login?redirect=true` | — | Redirect to Google (or JSON `authorization_url` with `redirect=false`). Includes a signed `state` |
-| GET | `/google/callback?code&state` | — | Verifies `state`, signs the user in, redirects to `FRONTEND_URL/auth/callback#token=…&profile_completed=…`. Failures redirect to `FRONTEND_URL/login#error=…` |
-| POST | `/dev-login` | — | `{email, name}` → token. **404 unless `ENABLE_DEV_LOGIN=true` and not production** |
-| GET | `/session` | S | Identity + `profile_completed`, usable before onboarding |
-| POST | `/complete-profile` | S | `{name, year 1-6, department, profile_picture?}` → new token |
+| POST | `/register` | — | `{name, email, password (≥6), year 1-6, department, profile_picture?}` → token. 400 if the email already exists. The account whose email equals `ADMIN_EMAIL` gets the `ADMIN` role |
+| POST | `/login` | — | `{email, password}` → token. 401 on wrong credentials |
+| GET | `/session` | S | Basic identity for the signed-in user |
+| POST | `/complete-profile` | S | `{name, year 1-6, department, profile_picture?}` → new token (also used to update the profile) |
+
+> Sign-in was changed from Google OAuth to email and password by the team on
+> 2026-10-12 (commit `aeb11c6`). Email addresses are validated, so reserved
+> domains such as `.test` and `.local` are rejected.
 
 ### Users — `/api/users`
 | Method | Path | Auth | Description |
@@ -137,9 +139,9 @@ de-duplicated.
 
 ## Example
 ```bash
-TOKEN=$(curl -s -X POST localhost:8000/api/auth/dev-login \
+TOKEN=$(curl -s -X POST localhost:8000/api/auth/login \
   -H 'Content-Type: application/json' \
-  -d '{"email":"me@campus.local","name":"Me"}' | jq -r .data.access_token)
+  -d '{"email":"me@campus.edu","password":"your-password"}' | jq -r .data.access_token)
 
 curl -s localhost:8000/api/feed -H "Authorization: Bearer $TOKEN"
 ```

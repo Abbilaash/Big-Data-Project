@@ -15,8 +15,7 @@ import pytest_asyncio
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 os.environ["ENVIRONMENT"] = "development"
-os.environ["ENABLE_DEV_LOGIN"] = "true"
-os.environ["ADMIN_EMAIL"] = "admin@campus.test"
+os.environ["ADMIN_EMAIL"] = "admin@campus.edu"
 os.environ["FRONTEND_URL"] = "http://localhost:3000"
 
 import httpx  # noqa: E402
@@ -88,7 +87,7 @@ class Factory:
         doc = {
             "user_id": uid,
             "google_id": f"g{self._n}",
-            "email": email or f"user{self._n}@campus.test",
+            "email": email or f"user{self._n}@campus.edu",
             "name": name,
             "year": year if completed else None,
             "department": department if completed else None,
